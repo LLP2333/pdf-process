@@ -1,0 +1,33 @@
+---
+description: 前端 (React / TS / Vite / Konva) 编码与测试规范
+globs: frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# 前端规范
+
+## 代码风格
+
+- `tsconfig` 已开严格模式,禁止 `any`,不得已用 `unknown` + 显式断言。
+- 函数组件 + hooks,无副作用渲染;副作用一律 `useEffect`。
+- 命名:文件 `PascalCase.tsx` / `camelCase.ts`,函数 `camelCase`。
+- 与后端交互只走 `src/api.ts`,不允许在组件里直接 `fetch`。
+
+## 状态管理
+
+- 顶层状态都在 `App.tsx`,组件靠 props 接收。
+- 修改 `questions` 用 `setQuestions((prev) => ...)`,避免闭包陷阱;
+  需要派生回索引(例如新建段后选中),在 `setQuestions` 回调里赋值给外层局部变量,再 `setActiveSegment(...)`。
+
+## 坐标系
+
+- 全程使用 PDF 原始坐标(单位 pt)。
+- 像素↔pt 的换算只在 `PdfPage.tsx` 内做一次:`pdfToDisplay = displayHeight / page.height`。
+
+## 测试 (vitest + Testing Library)
+
+- 位置:`frontend/tests/`。
+- 启用 `globals: true`,`environment: "jsdom"`,setup 文件已加载 `@testing-library/jest-dom`。
+- `react-konva` 难以稳定在 jsdom 测,优先测组件的纯交互层,Canvas 相关用视觉/e2e 手段。
+- 用 `vi.stubGlobal("fetch", ...)` 模拟网络,断言展示文案 + 调用次数 + 请求体。
+- 完成后必须跑通:`npm test && npm run build`,当前基线 10 passed + build OK。

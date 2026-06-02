@@ -1,0 +1,32 @@
+---
+description: 后端 (Python / FastAPI) 编码与测试规范
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# 后端规范
+
+## 代码风格
+
+- 顶部 `from __future__ import annotations`,4 空格缩进,行宽 120。
+- 路径全部用 `pathlib.Path`,不要拼字符串。
+- 外部契约只用 `pydantic.BaseModel` 描述,放在 `app/schemas.py`。
+- FastAPI 路由必须带 `summary` + `description` + 中文 docstring。
+
+## 异常与错误
+
+- 用户可见错误:`raise HTTPException(status_code=4xx, detail="中文说明")`。
+- 兜底:`except Exception as exc:  # noqa: BLE001`,转 500 时把 `exc` 拼到 `detail` 里。
+- 不要静默吞异常。
+
+## 服务函数
+
+- `pdf_service.build_pdf` 与 `ppt_service.build_pptx` 在「全无效段」时应返回 0,由 `main.py` 返回 422,不要在服务层抛 HTTP 异常。
+
+## 测试 (pytest)
+
+- 位置:`backend/tests/`。
+- 公共夹具放 `conftest.py`(已有 `sample_pdf` / `tmp_storage` / `client`)。
+- 接口测试用 `TestClient` 走完整链路,不要 mock `pdf_service`。
+- 文件名 `test_*.py`,用例描述用中文,清晰说明"在什么场景下,期望发生什么"。
+- 完成后必须跑通:`.venv/bin/pytest`,当前基线 22 passed。

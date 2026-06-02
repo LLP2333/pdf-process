@@ -1,0 +1,33 @@
+# 依赖
+node_modules/
+.venv/
+venv/
+
+# 构建/缓存产物
+dist/
+build/
+.vite/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 工程运行时数据(可能含大体积上传/导出文件)
+uploads/*
+outputs/*
+!uploads/.gitkeep
+!outputs/.gitkeep
+
+# 锁文件(可读性差,模型不需要参考)
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# 工具索引
+.codegraph/
+
+# 系统
+.DS_Store

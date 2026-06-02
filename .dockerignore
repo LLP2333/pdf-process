@@ -1,0 +1,16 @@
+# 仓库级 ignore;每个子镜像的 build context 也可独立 ignore
+.git
+.venv
+node_modules
+__pycache__
+*.pyc
+.DS_Store
+*.tsbuildinfo
+dist
+.vite
+.pytest_cache
+.ruff_cache
+htmlcov
+.codegraph
+uploads/*
+outputs/*

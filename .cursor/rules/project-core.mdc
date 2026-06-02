@@ -1,0 +1,39 @@
+---
+description: Exam Splitter 工程的全局强制约定:接口注释、文档同步、测试必跑
+alwaysApply: true
+---
+
+# Exam Splitter 工程铁律
+
+这是一个手动切分试卷 PDF 的全栈项目:
+后端 FastAPI + PyMuPDF + python-pptx,前端 React + Vite + TS + react-konva。
+项目根就是当前仓库根(本规则对仓库内所有路径生效)。
+
+## 三条强制约定
+
+1. **接口必须有注释**
+   - 每个 FastAPI 路由 (`@app.get/post/...`) 必须有 `summary` + `description` 参数,函数体内必须有中文 docstring。
+   - 每个后端服务函数 (`pdf_service.py` / `ppt_service.py` / `storage.py`) 必须有中文 docstring,复杂逻辑要写 Why。
+   - 前端 `api.ts` 每个导出函数必须有 docstring。
+   - 不要写"Increment counter"这种描述 What 的废话注释。
+
+2. **每次更改都要同步更新 `docs/` 下的文档**,并在 `docs/CHANGELOG.md` 顶部追加一行(日期 + 简述)。具体映射:
+   - 修改/新增路由 → 同步 `docs/api.md`
+   - 修改架构 / 目录结构 / 关键设计 → 同步 `docs/architecture.md`
+   - 新增运行命令 / 环境变量 → 同步 `docs/development.md`
+   - 新增 / 调整测试 → 同步 `docs/testing.md`
+
+3. **测试必须跑通,不允许 skip / xfail**
+   - 后端:`cd backend && .venv/bin/pytest`
+   - 前端:`cd frontend && npm test && npm run build`
+   - 新增逻辑必须配套至少一个正例 + 一个反例测试。
+   - 修复 bug 必须先写一个能复现 bug 的失败测试,再让它通过。
+
+## 其它共识
+
+- 删除文件:**使用 macOS `trash`**,不要用 `rm`。
+- 坐标系:全程使用 PDF 原始坐标(单位 pt),后端永不接受像素。
+- 错误返回中文:`HTTPException(detail="...")`,前端 `api.ts` 已统一抽取 `detail`。
+- 不要在 `app.main` 写业务逻辑,业务一律抽到 `pdf_service` / `ppt_service`。
+- 不要在前端绕过 `api.ts` 直接 `fetch`。
+- 历史使用说明见 `docs/contributing.md`。
