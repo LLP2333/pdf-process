@@ -35,9 +35,28 @@ class Segment(BaseModel):
     y2: float = Field(..., ge=0)
 
 
+class QuestionTrim(BaseModel):
+    """题目级别的"二次裁剪"。
+
+    与 `auto_trim` 不同,本字段是**用户在预览弹窗里手动加的微调量**:
+    `top` 应用于第一段的上边界(向下推),`bottom` 应用于最后一段的下边界(向上拉)。
+    **必须在 `auto_trim` 之后生效**,否则当用户调的量 < 自动去白边量时会被吞掉。
+    """
+
+    top: float = Field(0.0, ge=0, description="题目第一段上方再裁(pt),auto_trim 之后生效")
+    bottom: float = Field(0.0, ge=0, description="题目最后一段下方再裁(pt),auto_trim 之后生效")
+
+
 class Question(BaseModel):
     no: int = Field(..., ge=1, description="题号(1 起)")
     segments: list[Segment] = Field(..., min_length=1)
+    trim: QuestionTrim | None = Field(
+        default=None,
+        description=(
+            "可选的二次裁剪;在 auto_trim 之后单独应用,保证用户微调始终可见。"
+            "未传或全 0 时等价于不裁。"
+        ),
+    )
 
 
 class ExportRequest(BaseModel):

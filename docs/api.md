@@ -24,12 +24,26 @@
 | `y1` | float (≥0) | 起始 y(pt) |
 | `y2` | float (≥0) | 结束 y(pt);后端会自动处理 `y1 > y2` 的情形 |
 
+### `QuestionTrim`
+
+题目级别的"二次裁剪"(用户在预览弹窗里手动加的微调)。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `top` | float (≥0) | 题目第一段上方再裁掉的 pt 数 |
+| `bottom` | float (≥0) | 题目最后一段下方再裁掉的 pt 数 |
+
+**关键约定**:`trim` 在 `auto_trim` **之后**生效。后端不会把 `top/bottom` 混到 segment 的 clip 里再做像素扫描,而是先用 `auto_trim` 收紧 clip,**再**额外吃掉 trim 量。这样可避免"用户调的量 < 自动收紧量"时被吞掉,让微调始终可见(特别是跨页题的顶部)。
+
+若 `top`/`bottom` 大到把第一/最后一段裁没,该段会被丢弃,**但剩余的 trim 不会继续传递**到相邻段(保持可预测)。
+
 ### `Question`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `no` | int (≥1) | 题号 |
 | `segments` | `Segment[]`,≥1 | 按段顺序拼接;一道题跨页时多段 |
+| `trim` | `QuestionTrim?` | 可选;未传或全 0 时等价于不裁 |
 
 ### `ExportRequest`
 
@@ -98,7 +112,8 @@ curl http://localhost:8000/api/health
     "segments": [
       { "page": 0, "y1": 200, "y2": 842 },
       { "page": 1, "y1": 0, "y2": 300 }
-    ]
+    ],
+    "trim": { "top": 12, "bottom": 18 }
   },
   "auto_trim": true
 }
@@ -126,10 +141,13 @@ curl http://localhost:8000/api/health
   "auto_trim": true,
   "questions": [
     { "no": 1, "segments": [{ "page": 0, "y1": 120, "y2": 300 }] },
-    { "no": 2, "segments": [
-      { "page": 0, "y1": 300, "y2": 500 },
-      { "page": 1, "y1": 120, "y2": 240 }
-    ]}
+    { "no": 2,
+      "segments": [
+        { "page": 0, "y1": 300, "y2": 500 },
+        { "page": 1, "y1": 120, "y2": 240 }
+      ],
+      "trim": { "top": 0, "bottom": 24 }
+    }
   ]
 }
 ```

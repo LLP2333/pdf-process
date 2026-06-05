@@ -60,33 +60,33 @@ function segmentsBetween(
 }
 
 /**
- * 把单题的"顶部/底部再裁"应用到 segments,得到上传给后端的纯净 `Question`。
+ * 把派生题目转成"可以上传给后端"的纯净 `Question`,并把"二次裁剪"放在 `trim` 字段上。
  *
- * 顶部裁剪作用在第一段的 y1(向下推);底部裁剪作用在最后一段的 y2(向上拉)。
- * 若裁过头(段内 y1 ≥ y2)整段会被丢弃;若所有段都被裁没,返回 `segments=[]`,
- * 调用方应当过滤掉这种题。
+ * **关键约定**:trim 不再直接改 segments 的 y1/y2,而是作为 question 上的字段
+ * 单独传给后端,由后端在 `auto_trim` **之后**再向内吃掉 top/bottom。
+ * 这样可避免"用户调的 top 量 < 自动去白边量"时被 `max(clip.y0, ty0)` 吞掉,
+ * 让微调始终可见(尤其是跨页题的顶部)。
+ *
+ * 过度裁剪(top/bottom 大到把第一/最后一段裁没)的丢弃逻辑由后端 `_normalize_segments`
+ * 统一处理。
  */
 export function applyAdjustmentToQuestion(
   q: DerivedQuestion,
   adj: Adjustment | undefined,
 ): Question {
-  const cleaned: Question["segments"] = q.segments.map((s) => ({
+  const segments: Question["segments"] = q.segments.map((s) => ({
     page: s.page,
     y1: Math.min(s.y1, s.y2),
     y2: Math.max(s.y1, s.y2),
   }));
-  if (!adj || (!adj.top && !adj.bottom)) {
-    return { no: q.no, segments: cleaned };
+  if (!adj || (adj.top <= 0 && adj.bottom <= 0)) {
+    return { no: q.no, segments };
   }
-  if (adj.top > 0 && cleaned.length > 0) {
-    cleaned[0] = { ...cleaned[0], y1: cleaned[0].y1 + adj.top };
-  }
-  if (adj.bottom > 0 && cleaned.length > 0) {
-    const last = cleaned[cleaned.length - 1];
-    cleaned[cleaned.length - 1] = { ...last, y2: last.y2 - adj.bottom };
-  }
-  const valid = cleaned.filter((s) => s.y2 - s.y1 >= 1);
-  return { no: q.no, segments: valid };
+  return {
+    no: q.no,
+    segments,
+    trim: { top: Math.max(0, adj.top), bottom: Math.max(0, adj.bottom) },
+  };
 }
 
 /** 生成稳定 id(jsdom + 浏览器都可用)。 */

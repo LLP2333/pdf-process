@@ -3,6 +3,21 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-06-05 (傍晚)
+
+- **修复 bug:跨页题的「顶部再裁」/「底部再裁」会被 `auto_trim` 吞掉**。
+  原实现在前端就把 `top/bottom` 直接加到 segments 的 `y1/y2` 上,导致后端的
+  `_content_y_range` 像素扫描结果 `max(clip.y0, ty0)` / `min(clip.y1, ty1)`
+  把"用户调的量 < 自动去白边量"的部分整段吃掉,**视觉上调了等于没调**(尤其是
+  跨页题的顶部,因为 segments[0] 的上边界往往恰好落在页面白边里)。
+  - 新增 `QuestionTrim` 资源模型;`Question` 多一个可选 `trim: { top, bottom }` 字段。
+  - 后端 `_normalize_segments` 改为:**先**对每段做 `auto_trim`,**再**对第一/
+    最后一段单独应用 `trim.top` / `trim.bottom`。trim 永远是最后一刀,不会被吞。
+  - 前端 `applyAdjustmentToQuestion` 不再 mutate `segments`,改为把 `top/bottom`
+    挂到 `question.trim` 上发出去。过度裁剪的丢弃逻辑统一交后端 `_normalize_segments`。
+  - 新增后端测试 3 个:trim 在 auto_trim 之后生效、跨页 top/bottom 各自落到第一/
+    最后一段、过度裁剪丢弃整段;前端 dividers / PreviewModal 测试更新到新契约。
+
 ## 2026-06-05 (下午)
 
 - **修复语义 bug**:`buildQuestionsFromDividers` 不再把文档首末视为隐式边界。

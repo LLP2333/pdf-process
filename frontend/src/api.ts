@@ -20,9 +20,16 @@ export interface Segment {
   y2: number;
 }
 
+/** 题目级别的"二次裁剪",与后端 `QuestionTrim` 对齐;在 `auto_trim` **之后**生效。 */
+export interface QuestionTrim {
+  top: number;
+  bottom: number;
+}
+
 export interface Question {
   no: number;
   segments: Segment[];
+  trim?: QuestionTrim;
 }
 
 export type ExportFormat = "pdf" | "pptx";

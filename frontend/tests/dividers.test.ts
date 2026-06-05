@@ -92,39 +92,28 @@ describe("applyAdjustmentToQuestion", () => {
     ],
   };
 
-  it("无调整时原样返回 segments", () => {
+  it("无调整时返回原 segments 且不带 trim 字段", () => {
     const res = applyAdjustmentToQuestion(baseQ, undefined);
+    expect(res.segments).toEqual(baseQ.segments);
+    expect(res.trim).toBeUndefined();
+  });
+
+  it("有 top/bottom 时,segments 保持原样,trim 字段被放到 question 上", () => {
+    const res = applyAdjustmentToQuestion(baseQ, { top: 30, bottom: 50 });
+    // 关键:segments 不再被前端改动,后端在 auto_trim 之后再吃 trim
+    expect(res.segments).toEqual(baseQ.segments);
+    expect(res.trim).toEqual({ top: 30, bottom: 50 });
+  });
+
+  it("只调 top 时 trim.bottom = 0", () => {
+    const res = applyAdjustmentToQuestion(baseQ, { top: 20, bottom: 0 });
+    expect(res.trim).toEqual({ top: 20, bottom: 0 });
     expect(res.segments).toEqual(baseQ.segments);
   });
 
-  it("顶部裁剪只改第一段的 y1", () => {
-    const res = applyAdjustmentToQuestion(baseQ, { top: 30, bottom: 0 });
-    expect(res.segments).toEqual([
-      { page: 0, y1: 130, y2: 400 },
-      { page: 1, y1: 0, y2: 300 },
-    ]);
-  });
-
-  it("底部裁剪只改最后一段的 y2", () => {
-    const res = applyAdjustmentToQuestion(baseQ, { top: 0, bottom: 50 });
-    expect(res.segments).toEqual([
-      { page: 0, y1: 100, y2: 400 },
-      { page: 1, y1: 0, y2: 250 },
-    ]);
-  });
-
-  it("过度裁剪时丢弃越界段(但仍能保留可用段)", () => {
-    const q: DerivedQuestion = {
-      id: "x",
-      no: 1,
-      segments: [
-        { page: 0, y1: 100, y2: 150 },
-        { page: 1, y1: 0, y2: 200 },
-      ],
-    };
-    const res = applyAdjustmentToQuestion(q, { top: 80, bottom: 0 });
-    // 第一段被裁没;第二段保留
-    expect(res.segments).toEqual([{ page: 1, y1: 0, y2: 200 }]);
+  it("调整全为 0 时不带 trim 字段(避免发空对象)", () => {
+    const res = applyAdjustmentToQuestion(baseQ, { top: 0, bottom: 0 });
+    expect(res.trim).toBeUndefined();
   });
 });
 

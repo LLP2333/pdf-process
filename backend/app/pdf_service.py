@@ -108,11 +108,15 @@ def _normalize_segments(
 ) -> list[tuple[int, fitz.Rect]]:
     """把用户给的 `(page, y1, y2)` 规范化为页内 `fitz.Rect`。
 
-    - 自动 `min/max` 以兼容 `y1 > y2` 的输入;
-    - 越界(`page` 不在 `[0, page_count)`)或高度 < 1 的段直接丢弃;
-    - 横向恒取整页宽(本期需求只画水平线);
-    - `auto_trim=True` 时,对每段额外做一次"像素扫描去白边",
-      让导出的题目紧贴有内容的最小包围盒。
+    流程:
+    1. 自动 `min/max` 以兼容 `y1 > y2` 的输入;
+    2. 越界(`page` 不在 `[0, page_count)`)或高度 < 1 的段直接丢弃;
+    3. 横向恒取整页宽(本期需求只画水平线);
+    4. `auto_trim=True` 时,对每段额外做一次"像素扫描去白边",
+       让导出的题目紧贴有内容的最小包围盒;
+    5. 若 `question.trim` 不为空,**在去白边之后**再应用题目级 trim
+       —— `top` 收第一段上界,`bottom` 收最后一段下界。这一步必须放在最后,
+       否则 `auto_trim` 会"吞掉"小于自动收紧量的 top/bottom,导致用户微调失效。
     """
     out: list[tuple[int, fitz.Rect]] = []
     for seg in question.segments:
@@ -130,6 +134,24 @@ def _normalize_segments(
             if ty1 - ty0 >= 1:
                 rect = fitz.Rect(pr.x0, ty0, pr.x1, ty1)
         out.append((seg.page, rect))
+
+    trim = question.trim
+    if out and trim is not None:
+        if trim.top > 0:
+            pno, rect = out[0]
+            new_y0 = rect.y0 + trim.top
+            if new_y0 < rect.y1 - 1:
+                out[0] = (pno, fitz.Rect(rect.x0, new_y0, rect.x1, rect.y1))
+            else:
+                # 整段被裁没,剩余的 top 不再传递(保持简单 / 可预测)
+                out.pop(0)
+        if out and trim.bottom > 0:
+            pno, rect = out[-1]
+            new_y1 = rect.y1 - trim.bottom
+            if new_y1 > rect.y0 + 1:
+                out[-1] = (pno, fitz.Rect(rect.x0, rect.y0, rect.x1, new_y1))
+            else:
+                out.pop(-1)
     return out
 
 
