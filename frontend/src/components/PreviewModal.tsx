@@ -287,6 +287,11 @@ export default function PreviewModal({
   );
 }
 
+// 滑块上限要够大,让跨页题能通过"底部再裁"穿过最后一段、继续吃到前一段;
+// 一页 A4 ~842pt,1000pt 足够跨段累积。数字框给到 2000pt 兜底极端情况。
+const ADJ_SLIDER_MAX = 1000;
+const ADJ_INPUT_MAX = 2000;
+
 function AdjustRow({
   label,
   value,
@@ -302,18 +307,22 @@ function AdjustRow({
       <input
         type="range"
         min={0}
-        max={120}
+        max={ADJ_SLIDER_MAX}
         step={1}
-        value={value}
-        onChange={(e) => onChange(Math.max(0, Math.min(120, Number(e.target.value) || 0)))}
+        value={Math.min(value, ADJ_SLIDER_MAX)}
+        onChange={(e) =>
+          onChange(Math.max(0, Math.min(ADJ_SLIDER_MAX, Number(e.target.value) || 0)))
+        }
       />
       <input
         type="number"
         min={0}
-        max={500}
+        max={ADJ_INPUT_MAX}
         step={1}
         value={value}
-        onChange={(e) => onChange(Math.max(0, Number(e.target.value) || 0))}
+        onChange={(e) =>
+          onChange(Math.max(0, Math.min(ADJ_INPUT_MAX, Number(e.target.value) || 0)))
+        }
       />
     </label>
   );
