@@ -186,8 +186,8 @@ def test_trim_applies_to_first_and_last_segments_in_cross_page(sample_pdf: Path)
     assert last.y1 == pytest.approx(400 - 50)
 
 
-def test_trim_overshoot_drops_segment(sample_pdf: Path) -> None:
-    """过度裁剪:top 大于第一段高度 ⇒ 丢弃第一段(剩余 trim 不再传递)。"""
+def test_trim_top_cascades_across_segments(sample_pdf: Path) -> None:
+    """top 吃完第一段后,剩余量继续吃下一段的顶部(跨段级联)。"""
     doc = fitz.open(sample_pdf.as_posix())
     try:
         q = Question(
@@ -202,8 +202,57 @@ def test_trim_overshoot_drops_segment(sample_pdf: Path) -> None:
     finally:
         doc.close()
 
+    # 第一段被完全吃掉,剩 30pt 继续吃第二段的顶部
     assert len(segs) == 1
     assert segs[0][0] == 1
     rect = segs[0][1]
-    assert rect.y0 == pytest.approx(0)
+    assert rect.y0 == pytest.approx(30)
     assert rect.y1 == pytest.approx(400)
+
+
+def test_trim_bottom_cascades_into_first_page_footer(sample_pdf: Path) -> None:
+    """关键回归(用户报的 bug 现场):跨两页题 + 大 bottom,吃完第二页那段后继续吃第一页底部。
+
+    场景:题目跨页,segments[0] 是"第一页下半部分"(底部带"第1页(共2页)"页脚),
+    segments[1] 是"第二页上半部分"。用户拖动 bottom 滑块到 200pt:第二页那一段(200pt)
+    被完全吃掉,剩 0;若 bottom = 230,则吃穿第二页后还要继续从第一页底部再吃 30pt。
+    """
+    doc = fitz.open(sample_pdf.as_posix())
+    try:
+        ph0 = doc[0].rect.height
+        q = Question(
+            no=1,
+            segments=[
+                Segment(page=0, y1=300, y2=ph0),  # 第一页下半,底部带页脚
+                Segment(page=1, y1=0, y2=200),  # 第二页上半,高 200
+            ],
+            trim=QuestionTrim(top=0, bottom=230),  # 200 + 30
+        )
+        segs = pdf_service._normalize_segments(q, doc, auto_trim=False)
+    finally:
+        doc.close()
+
+    # 第二段被完全吃掉,剩 30pt 继续吃第一段底部
+    assert len(segs) == 1
+    assert segs[0][0] == 0
+    rect = segs[0][1]
+    assert rect.y0 == pytest.approx(300)
+    assert rect.y1 == pytest.approx(ph0 - 30)
+
+
+def test_trim_eats_everything_returns_empty(sample_pdf: Path) -> None:
+    """trim 大到把所有段都吃光时返回空列表(由上层判 X-Empty)。"""
+    doc = fitz.open(sample_pdf.as_posix())
+    try:
+        q = Question(
+            no=1,
+            segments=[
+                Segment(page=0, y1=100, y2=200),  # 高 100
+                Segment(page=1, y1=0, y2=100),  # 高 100
+            ],
+            trim=QuestionTrim(top=0, bottom=500),  # 远超 200 总高
+        )
+        segs = pdf_service._normalize_segments(q, doc, auto_trim=False)
+    finally:
+        doc.close()
+    assert segs == []

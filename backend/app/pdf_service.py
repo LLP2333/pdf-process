@@ -137,21 +137,32 @@ def _normalize_segments(
 
     trim = question.trim
     if out and trim is not None:
+        # 让 trim 跨段级联:吃完当前端段后,把剩余量继续应用到相邻段。
+        # 这是为了支持用户的真实诉求 —— 比如题目跨两页时,
+        # 用「底部再裁」从第二页一直吃到第一页底部的页码("第1页(共2页)")。
+        # 没有这个级联,bottom 调到把 segments[-1] 裁没就停了,前面那段动不了。
         if trim.top > 0:
-            pno, rect = out[0]
-            new_y0 = rect.y0 + trim.top
-            if new_y0 < rect.y1 - 1:
-                out[0] = (pno, fitz.Rect(rect.x0, new_y0, rect.x1, rect.y1))
-            else:
-                # 整段被裁没,剩余的 top 不再传递(保持简单 / 可预测)
-                out.pop(0)
+            remain = trim.top
+            while out and remain > 0:
+                pno, rect = out[0]
+                h = rect.y1 - rect.y0
+                if remain >= h - 1:
+                    remain -= h
+                    out.pop(0)
+                else:
+                    out[0] = (pno, fitz.Rect(rect.x0, rect.y0 + remain, rect.x1, rect.y1))
+                    remain = 0
         if out and trim.bottom > 0:
-            pno, rect = out[-1]
-            new_y1 = rect.y1 - trim.bottom
-            if new_y1 > rect.y0 + 1:
-                out[-1] = (pno, fitz.Rect(rect.x0, rect.y0, rect.x1, new_y1))
-            else:
-                out.pop(-1)
+            remain = trim.bottom
+            while out and remain > 0:
+                pno, rect = out[-1]
+                h = rect.y1 - rect.y0
+                if remain >= h - 1:
+                    remain -= h
+                    out.pop()
+                else:
+                    out[-1] = (pno, fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 - remain))
+                    remain = 0
     return out
 
 
