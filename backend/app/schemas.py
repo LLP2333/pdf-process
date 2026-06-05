@@ -43,4 +43,15 @@ class Question(BaseModel):
 class ExportRequest(BaseModel):
     format: str = Field("pdf", pattern=r"^(pdf|pptx)$")
     margin: float = Field(28.0, ge=0, le=120, description="页面四周留白(pt)")
+    auto_trim: bool = Field(
+        True,
+        description="是否自动去除题目内容上下的白边(默认开启)。开启时会以原 clip 范围做像素扫描,把首末非白行回算到 pt 坐标。",
+    )
     questions: list[Question] = Field(..., min_length=1)
+
+
+class PreviewRequest(BaseModel):
+    """单题实时预览请求:与导出共用切分数据结构,差别只是仅返回一道题的 PNG。"""
+
+    question: Question
+    auto_trim: bool = Field(True, description="是否启用自动去白边")

@@ -34,3 +34,13 @@ def test_margin_bounds() -> None:
             margin=999,
             questions=[Question(no=1, segments=[Segment(page=0, y1=0, y2=10)])],
         )
+
+
+def test_auto_trim_defaults_to_true() -> None:
+    """auto_trim 是新加字段,默认 True,前端不传时仍按"去白边"导出。"""
+    req = ExportRequest(
+        format="pdf",
+        margin=28,
+        questions=[Question(no=1, segments=[Segment(page=0, y1=0, y2=10)])],
+    )
+    assert req.auto_trim is True

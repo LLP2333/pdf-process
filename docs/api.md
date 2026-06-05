@@ -37,7 +37,15 @@
 | --- | --- | --- |
 | `format` | `"pdf"` \| `"pptx"` | 导出格式 |
 | `margin` | float (0–120) | 页面四周留白(pt),PDF 与 PPTX 共用 |
+| `auto_trim` | bool,默认 `true` | 是否在裁剪前自动去除每段上下白边(像素扫描) |
 | `questions` | `Question[]`,≥1 | 切分方案 |
+
+### `PreviewRequest`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `question` | `Question` | 单题切分;跨页会被纵向拼接成一张 PNG |
+| `auto_trim` | bool,默认 `true` | 同 `ExportRequest.auto_trim` |
 
 ## 路由
 
@@ -77,6 +85,34 @@ curl http://localhost:8000/api/health
 
 返回上一接口产生的预览 PNG。`name` 必须匹配 `page_<3 位数字>.png`,否则 404。
 
+### `POST /api/preview/{doc_id}`
+
+单题实时预览。后端会按 `auto_trim` 处理后,把该题(可能跨页)纵向拼接成一张 PNG。
+
+**请求体** (`PreviewRequest`):
+
+```json
+{
+  "question": {
+    "no": 1,
+    "segments": [
+      { "page": 0, "y1": 200, "y2": 842 },
+      { "page": 1, "y1": 0, "y2": 300 }
+    ]
+  },
+  "auto_trim": true
+}
+```
+
+**成功 200**:
+
+- `Content-Type`:`image/png`
+- 无任何有效段时,返回一张 1x1 占位 PNG,并附 `X-Empty: 1`
+
+**失败**:
+- `404` `doc_id` 不存在或已过期
+- `500` 服务器内部异常
+
 ### `POST /api/export/{doc_id}`
 
 按切分方案导出 PDF 或 PPTX。
@@ -87,6 +123,7 @@ curl http://localhost:8000/api/health
 {
   "format": "pdf",
   "margin": 28,
+  "auto_trim": true,
   "questions": [
     { "no": 1, "segments": [{ "page": 0, "y1": 120, "y2": 300 }] },
     { "no": 2, "segments": [

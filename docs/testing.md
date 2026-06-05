@@ -20,11 +20,11 @@
 
 | 文件 | 覆盖点 |
 | --- | --- |
-| `test_schemas.py` | Pydantic 字段校验:format 枚举、空 list、margin 范围、page 非负 |
+| `test_schemas.py` | Pydantic 字段校验:format 枚举、空 list、margin 范围、page 非负、`auto_trim` 默认值 |
 | `test_storage.py` | 路径拼接、`new_doc_id` 格式、`maintenance` 仅清理过期目录 |
-| `test_pdf_service.py` | 预览渲染数量与命名、PDF 导出页数、空段过滤、`y1>y2` 自动 swap、段渲染返回 PNG |
+| `test_pdf_service.py` | 预览渲染数量与命名、PDF 导出页数、空段过滤、`y1>y2` 自动 swap、段渲染返回 PNG;**`auto_trim` 收紧内容包围盒、全白区域保留原范围、单题预览拼接 / 空题返回 None** |
 | `test_ppt_service.py` | 16:9 尺寸、幻灯片数、空题目跳过 |
-| `test_api.py` | 健康检查;上传错误类型/空文件/损坏 PDF;完整流程 upload→pages→export PDF/PPTX;路径遍历防御;不存在 doc 返回 404;全无效段返回 422 |
+| `test_api.py` | 健康检查;上传错误类型/空文件/损坏 PDF;完整流程 upload→pages→export PDF/PPTX;路径遍历防御;不存在 doc 返回 404;全无效段返回 422;**`POST /api/preview/{doc_id}` 正常返回 PNG / 空题 `X-Empty` / 404** |
 
 ### 运行
 
@@ -37,7 +37,7 @@ cd backend
 
 ### 期望状态
 
-当前:**22 passed**。
+当前:**30 passed**。
 
 ## 前端 — vitest + Testing Library
 
@@ -47,9 +47,11 @@ cd backend
 
 | 文件 | 覆盖点 |
 | --- | --- |
-| `api.test.ts` | uploadPdf 成功/失败;exportFile 解析中文 Content-Disposition、回退默认名、错误抽取 |
-| `QuestionList.test.tsx` | 空状态、增删按钮回调、点击段触发 onSelectSegment |
-| `ExportPanel.test.tsx` | 无段时本地校验不发请求;有段时正确发起 fetch 并展示结果 |
+| `api.test.ts` | uploadPdf 成功/失败;exportFile 解析中文 Content-Disposition、回退默认名、错误抽取;`previewQuestion` 解析 `X-Empty` / 错误抽取 |
+| `dividers.test.ts` | `buildQuestionsFromDividers`:空状态、同页切分、跨页拆段、乱序排序、首端空区间过滤、空页面 |
+| `QuestionList.test.tsx` | 空状态、派生题目列表渲染、清空按钮禁用态、点击题目触发选中 |
+| `ExportPanel.test.tsx` | 无段时本地校验不发请求;有段时携带 `auto_trim` 字段发请求;复选框联动 |
+| `PreviewPanel.test.tsx` | 空状态文案;有题目时拉取并渲染图片;点击触发选中;`X-Empty` → 空态文案 |
 
 > `PdfPage` 重度依赖 `react-konva` + Canvas,jsdom 难以稳定测;暂以视觉手测为主,后续可考虑 Playwright e2e。
 
@@ -64,7 +66,7 @@ npm run build           # 顺带 tsc -b 严格类型检查
 
 ### 期望状态
 
-当前:**10 passed**;`npm run build` 通过。
+当前:**25 passed**;`npm run build` 通过。
 
 ## CI 建议
 

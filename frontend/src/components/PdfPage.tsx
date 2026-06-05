@@ -1,50 +1,49 @@
-import { useEffect, useRef, useState } from "react";
-import { Stage, Layer, Image as KImage, Line, Circle, Rect, Text } from "react-konva";
+import { forwardRef, useEffect, useRef, useState } from "react";
+import { Stage, Layer, Image as KImage, Line, Circle, Rect, Text, Group } from "react-konva";
 import type Konva from "konva";
-import type { PageInfo, Question } from "../types";
-
-interface PageLine {
-  questionIndex: number;
-  segmentIndex: number;
-  edge: "y1" | "y2";
-  no: number;
-  yPdf: number;
-  active: boolean;
-}
+import type { Divider, PageInfo, Question } from "../types";
 
 interface Props {
   page: PageInfo;
+  dividers: Divider[];
   questions: Question[];
-  activeQuestion: number | null;
-  activeSegment: number | null;
-  /** 双击页面:加 shift = 设 y1,否则 = 设 y2;若当前题在该页还没段则新建。 */
-  onClickPage: (page: number, yPdf: number, shift: boolean) => void;
-  /** 拖动某条线 */
-  onDragLine: (
-    questionIndex: number,
-    segmentIndex: number,
-    edge: "y1" | "y2",
-    yPdf: number
-  ) => void;
-  /** 用户在本页"新建段"按钮 */
-  onAddSegmentInPage: (page: number) => void;
-  /** 选中段 */
-  onSelectSegment: (questionIndex: number, segmentIndex: number) => void;
+  activeQuestionIndex: number | null;
+  /** 单击空白处:在该页 y 处新建一条分割线。 */
+  onAddDivider: (page: number, y: number) => void;
+  /** Shift+单击分割线 或 点击 × 按钮:删除该分割线。 */
+  onRemoveDivider: (id: string) => void;
+  /** 拖动分割线:仅修改 y(同页内移动)。 */
+  onMoveDivider: (id: string, y: number) => void;
+  /** 单击分割线(无 Shift):选中分割线下方那道题。 */
+  onSelectQuestion: (qi: number) => void;
 }
 
 const MAX_DISPLAY_WIDTH = 920;
 
-/** 把一页 PDF 渲染成图片 + Konva 透明层(用于绘制起始/结束行)。 */
-export default function PdfPage({
-  page,
-  questions,
-  activeQuestion,
-  activeSegment,
-  onClickPage,
-  onDragLine,
-  onAddSegmentInPage,
-  onSelectSegment,
-}: Props) {
+/**
+ * 单页 PDF + 透明 Konva 叠加层。
+ *
+ * 交互模型:
+ * - 在空白处单击:新增分割线
+ * - 拖动分割线:调整 y
+ * - Shift+单击 / 点 × :删除
+ * - 单击:选中下方的题目并高亮
+ *
+ * 用 `forwardRef` 暴露外层 DOM,方便上层 `scrollIntoView`。
+ */
+const PdfPage = forwardRef<HTMLDivElement, Props>(function PdfPage(
+  {
+    page,
+    dividers,
+    questions,
+    activeQuestionIndex,
+    onAddDivider,
+    onRemoveDivider,
+    onMoveDivider,
+    onSelectQuestion,
+  },
+  ref,
+) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
 
   useEffect(() => {
@@ -56,59 +55,46 @@ export default function PdfPage({
   const displayWidth = Math.min(page.image_width, MAX_DISPLAY_WIDTH);
   const scale = displayWidth / page.image_width;
   const displayHeight = page.image_height * scale;
-  const pdfToDisplay = displayHeight / page.height; // 1 pt -> displayHeight/page.height px
+  const pdfToDisplay = displayHeight / page.height;
 
-  const lines: PageLine[] = [];
-  questions.forEach((q, qi) => {
-    q.segments.forEach((seg, si) => {
-      if (seg.page !== page.index) return;
-      const isActive = qi === activeQuestion && si === activeSegment;
-      lines.push({
-        questionIndex: qi,
-        segmentIndex: si,
-        edge: "y1",
-        no: q.no,
-        yPdf: seg.y1,
-        active: isActive,
-      });
-      lines.push({
-        questionIndex: qi,
-        segmentIndex: si,
-        edge: "y2",
-        no: q.no,
-        yPdf: seg.y2,
-        active: isActive,
-      });
-    });
-  });
+  const pageDividers = dividers
+    .filter((d) => d.page === page.index)
+    .sort((a, b) => a.y - b.y);
 
   const stageRef = useRef<Konva.Stage>(null);
 
-  const handleStageDblClick = (evt: Konva.KonvaEventObject<MouseEvent>) => {
+  /** 找出穿过本页的所有题目区间(用于显示题号大字 + 选中高亮)。 */
+  const pageRanges = questions
+    .map((q, qi) => {
+      const seg = q.segments.find((s) => s.page === page.index);
+      if (!seg) return null;
+      return { qi, no: q.no, y1: Math.min(seg.y1, seg.y2), y2: Math.max(seg.y1, seg.y2) };
+    })
+    .filter((r): r is { qi: number; no: number; y1: number; y2: number } => r !== null);
+
+  const handleStageClick = (evt: Konva.KonvaEventObject<MouseEvent>) => {
+    // 点到非 Stage 子节点(例如分割线 Group)时,evt.target !== stage,跳过新增分割线
     const stage = evt.target.getStage();
     if (!stage) return;
+    if (evt.target !== stage) return;
     const pos = stage.getPointerPosition();
     if (!pos) return;
     const yPdf = clamp(pos.y / pdfToDisplay, 0, page.height);
-    onClickPage(page.index, yPdf, evt.evt.shiftKey);
+    onAddDivider(page.index, yPdf);
   };
 
   return (
-    <div className="pdf-page">
+    <div ref={ref} className="pdf-page" data-page={page.index}>
       <div className="pdf-page-head">
         <span className="pdf-page-no">第 {page.index + 1} 页</span>
-        <button className="mini" onClick={() => onAddSegmentInPage(page.index)}>
-          + 在本页新建段
-        </button>
         <span className="pdf-page-hint">
-          双击 = 设置结束行(Shift+双击 = 设置起始行)
+          单击 = 新增分割线 · 拖动 = 调整 · Shift+单击 / × = 删除
         </span>
       </div>
       <div
         className="pdf-page-stage"
         style={{ width: displayWidth, height: displayHeight }}
       >
-        {/* 背景:PDF 渲染图,放在原生 img 而非 Konva,让事件交给 Konva Stage 处理 */}
         {image && (
           <img
             className="pdf-page-img"
@@ -122,127 +108,163 @@ export default function PdfPage({
           ref={stageRef}
           width={displayWidth}
           height={displayHeight}
-          onDblClick={handleStageDblClick}
-          onDblTap={handleStageDblClick}
+          onClick={handleStageClick}
+          onTap={handleStageClick}
           className="pdf-page-stage-canvas"
         >
           <Layer>
             {image && (
-              // 透明矩形撑满 Stage 以便接收事件
+              // 透明背景,仅用于命中 Stage onClick
               <KImage image={image} width={displayWidth} height={displayHeight} opacity={0} listening={false} />
             )}
-            {lines.map((ln) => {
-              const y = ln.yPdf * pdfToDisplay;
-              const color = ln.edge === "y1" ? "#2563eb" : "#ea580c";
-              const dash = ln.active ? [10, 4] : [4, 4];
-              return (
-                <Line
-                  key={`${ln.questionIndex}-${ln.segmentIndex}-${ln.edge}`}
-                  points={[0, y, displayWidth, y]}
-                  stroke={color}
-                  strokeWidth={ln.active ? 2 : 1.2}
-                  dash={dash}
-                  opacity={ln.active ? 1 : 0.55}
-                  listening={false}
-                />
-              );
-            })}
-            {/* 高亮选中段范围 */}
-            {questions[activeQuestion ?? -1]?.segments[activeSegment ?? -1]?.page === page.index && (() => {
-              const seg = questions[activeQuestion!].segments[activeSegment!];
-              const top = Math.min(seg.y1, seg.y2) * pdfToDisplay;
-              const bottom = Math.max(seg.y1, seg.y2) * pdfToDisplay;
-              return (
+
+            {/* 选中题目对应区间的高亮 */}
+            {pageRanges
+              .filter((r) => r.qi === activeQuestionIndex)
+              .map((r) => (
                 <Rect
+                  key={`hl-${r.qi}`}
                   x={0}
-                  y={top}
+                  y={r.y1 * pdfToDisplay}
                   width={displayWidth}
-                  height={bottom - top}
+                  height={(r.y2 - r.y1) * pdfToDisplay}
                   fill="#22c55e"
-                  opacity={0.08}
+                  opacity={0.1}
+                  listening={false}
+                />
+              ))}
+
+            {/* 题号水印:在每题在本页可见区间的中部画大数字 */}
+            {pageRanges.map((r) => {
+              const yMid = ((r.y1 + r.y2) / 2) * pdfToDisplay;
+              return (
+                <Text
+                  key={`no-${r.qi}`}
+                  x={6}
+                  y={yMid - 14}
+                  text={`#${r.no}`}
+                  fontSize={20}
+                  fontStyle="bold"
+                  fill="#94a3b8"
+                  opacity={r.qi === activeQuestionIndex ? 0.9 : 0.45}
                   listening={false}
                 />
               );
-            })()}
-            {/* 拖拽手柄 + 题号标签 */}
-            {lines.map((ln) => {
-              const y = ln.yPdf * pdfToDisplay;
-              const color = ln.edge === "y1" ? "#2563eb" : "#ea580c";
-              return (
-                <Handle
-                  key={`h-${ln.questionIndex}-${ln.segmentIndex}-${ln.edge}`}
-                  x={displayWidth - 18}
-                  y={y}
-                  color={color}
-                  label={`${ln.no}${ln.edge === "y1" ? "起" : "止"}`}
-                  active={ln.active}
-                  onClick={() => onSelectSegment(ln.questionIndex, ln.segmentIndex)}
-                  onDrag={(dy) => {
-                    const newY = clamp((y + dy) / pdfToDisplay, 0, page.height);
-                    onDragLine(ln.questionIndex, ln.segmentIndex, ln.edge, newY);
-                  }}
-                  displayHeight={displayHeight}
-                />
-              );
             })}
+
+            {/* 分割线 */}
+            {pageDividers.map((d) => (
+              <DividerLine
+                key={d.id}
+                divider={d}
+                width={displayWidth}
+                displayHeight={displayHeight}
+                pdfToDisplay={pdfToDisplay}
+                onRemove={() => onRemoveDivider(d.id)}
+                onMove={(yDisplay) =>
+                  onMoveDivider(d.id, clamp(yDisplay / pdfToDisplay, 0, page.height))
+                }
+                onSelectAdjacent={() => {
+                  // 选中该分割线下方的题目(若有);否则上方
+                  const idx = questions.findIndex((q) =>
+                    q.segments.some(
+                      (s) => s.page === d.page && Math.abs(Math.min(s.y1, s.y2) - d.y) < 1,
+                    ),
+                  );
+                  if (idx >= 0) onSelectQuestion(idx);
+                }}
+              />
+            ))}
           </Layer>
         </Stage>
       </div>
     </div>
   );
-}
+});
+
+export default PdfPage;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-interface HandleProps {
-  x: number;
-  y: number;
-  color: string;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  onDrag: (dy: number) => void;
+interface DividerLineProps {
+  divider: Divider;
+  width: number;
   displayHeight: number;
+  pdfToDisplay: number;
+  onRemove: () => void;
+  onMove: (yDisplay: number) => void;
+  onSelectAdjacent: () => void;
 }
 
-function Handle({ x, y, color, label, active, onClick, onDrag, displayHeight }: HandleProps) {
+/** 一条可拖动 + 可单击 + 可 shift-删的分割线,含右侧 × 删除按钮。 */
+function DividerLine({
+  divider,
+  width,
+  displayHeight,
+  pdfToDisplay,
+  onRemove,
+  onMove,
+  onSelectAdjacent,
+}: DividerLineProps) {
+  const y = divider.y * pdfToDisplay;
+
   return (
-    <>
-      <Rect
-        x={x - 22}
-        y={y - 10}
-        width={48}
-        height={20}
-        cornerRadius={4}
-        fill={color}
-        opacity={active ? 1 : 0.7}
-        draggable
-        dragBoundFunc={(pos) => ({ x: x - 22, y: Math.max(-10, Math.min(displayHeight - 10, pos.y)) })}
-        onDragMove={(e) => {
-          const node = e.target;
-          const newY = node.y() + 10;
-          onDrag(newY - y);
-          // 立即归位,避免因为父组件状态延迟带来抖动
-          node.y(y - 10);
+    <Group
+      x={0}
+      y={y}
+      draggable
+      dragBoundFunc={(pos) => ({ x: 0, y: clamp(pos.y, 0, displayHeight) })}
+      onDragMove={(e) => onMove(e.target.y())}
+      onDragEnd={(e) => onMove(e.target.y())}
+      onClick={(e) => {
+        e.cancelBubble = true;
+        if (e.evt.shiftKey) onRemove();
+        else onSelectAdjacent();
+      }}
+      onTap={(e) => {
+        // 触摸事件没有 shift,移动端只能选中(删除请通过 × 按钮)
+        e.cancelBubble = true;
+        onSelectAdjacent();
+      }}
+    >
+      <Line
+        points={[0, 0, width - 30, 0]}
+        stroke="#dc2626"
+        strokeWidth={2}
+        dash={[6, 4]}
+        hitStrokeWidth={14}
+      />
+      <Circle
+        x={width - 16}
+        y={0}
+        radius={11}
+        fill="#dc2626"
+        stroke="#fff"
+        strokeWidth={2}
+        onClick={(e) => {
+          e.cancelBubble = true;
+          onRemove();
         }}
-        onClick={onClick}
-        onTap={onClick}
+        onTap={(e) => {
+          e.cancelBubble = true;
+          onRemove();
+        }}
       />
       <Text
-        x={x - 22}
-        y={y - 9}
-        width={48}
-        height={18}
+        x={width - 24}
+        y={-7}
+        width={16}
+        height={14}
+        text="×"
+        fontSize={14}
+        fontStyle="bold"
+        fill="#fff"
         align="center"
         verticalAlign="middle"
-        text={label}
-        fontSize={11}
-        fill="#fff"
         listening={false}
       />
-      <Circle x={x - 36} y={y} radius={4} fill={color} opacity={active ? 1 : 0.7} listening={false} />
-    </>
+    </Group>
   );
 }

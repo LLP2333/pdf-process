@@ -23,7 +23,13 @@ def _emu(inches: float) -> Emu:
     return Inches(inches)
 
 
-def build_pptx(pdf_path: Path, out_path: Path, questions: list[Question], margin_pt: float) -> int:
+def build_pptx(
+    pdf_path: Path,
+    out_path: Path,
+    questions: list[Question],
+    margin_pt: float,
+    auto_trim: bool = True,
+) -> int:
     """生成一题一张幻灯片的 16:9 PPTX。
 
     Args:
@@ -32,6 +38,7 @@ def build_pptx(pdf_path: Path, out_path: Path, questions: list[Question], margin
         questions: 用户给的切分方案(`no` + 多段)。
         margin_pt: 每张幻灯片四周留白(pt),与 PDF 导出共用同一参数。
             内部按 1in = 72pt 换算为英寸。
+        auto_trim: 是否自动去除题目内容上下白边(与 PDF 导出共用同一开关)。
 
     Returns:
         成功生成的幻灯片数(过滤掉空段题目后)。
@@ -48,7 +55,7 @@ def build_pptx(pdf_path: Path, out_path: Path, questions: list[Question], margin
 
     made = 0
     for q in sorted(questions, key=lambda x: x.no):
-        pngs = pdf_service.render_segments_to_png(pdf_path, q)
+        pngs = pdf_service.render_segments_to_png(pdf_path, q, auto_trim=auto_trim)
         if not pngs:
             continue
 

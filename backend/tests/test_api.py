@@ -110,3 +110,43 @@ def test_export_all_invalid_segments_returns_422(client: TestClient, sample_pdf:
     }
     resp = client.post(f"/api/export/{doc_id}", json=payload)
     assert resp.status_code == 422
+
+
+def test_preview_returns_png(client: TestClient, sample_pdf: Path) -> None:
+    with sample_pdf.open("rb") as fh:
+        up = client.post("/api/upload", files={"file": (sample_pdf.name, fh.read(), "application/pdf")})
+    doc_id = up.json()["doc_id"]
+
+    payload = {
+        "question": {"no": 1, "segments": [{"page": 0, "y1": 80, "y2": 400}]},
+        "auto_trim": True,
+    }
+    resp = client.post(f"/api/preview/{doc_id}", json=payload)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.headers.get("x-empty") is None
+    assert resp.content.startswith(b"\x89PNG")
+
+
+def test_preview_empty_segments_returns_x_empty_header(client: TestClient, sample_pdf: Path) -> None:
+    with sample_pdf.open("rb") as fh:
+        up = client.post("/api/upload", files={"file": (sample_pdf.name, fh.read(), "application/pdf")})
+    doc_id = up.json()["doc_id"]
+
+    payload = {
+        "question": {"no": 1, "segments": [{"page": 99, "y1": 0, "y2": 10}]},
+        "auto_trim": True,
+    }
+    resp = client.post(f"/api/preview/{doc_id}", json=payload)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.headers.get("x-empty") == "1"
+
+
+def test_preview_nonexistent_doc_returns_404(client: TestClient) -> None:
+    payload = {
+        "question": {"no": 1, "segments": [{"page": 0, "y1": 0, "y2": 10}]},
+        "auto_trim": True,
+    }
+    resp = client.post("/api/preview/deadbeef", json=payload)
+    assert resp.status_code == 404

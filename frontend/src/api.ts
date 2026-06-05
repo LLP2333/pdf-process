@@ -30,7 +30,20 @@ export type ExportFormat = "pdf" | "pptx";
 export interface ExportRequest {
   format: ExportFormat;
   margin: number;
+  auto_trim: boolean;
   questions: Question[];
+}
+
+export interface PreviewRequest {
+  question: Question;
+  auto_trim: boolean;
+}
+
+export interface PreviewResult {
+  /** 渲染好的 PNG 的 object URL,前端用完后应当 revoke */
+  url: string;
+  /** 后端为「该题无有效区域」时返回 1x1 占位图并附带此字段 */
+  empty: boolean;
 }
 
 const API = "/api";
@@ -69,6 +82,31 @@ export async function exportFile(
       : "试卷切割重组.pptx";
   const blob = await resp.blob();
   return { blob, filename, count };
+}
+
+/**
+ * 拉取单题的实时预览图。
+ *
+ * 调用 `POST /api/preview/{docId}`,响应 `image/png`。当一题没有任何有效段时,
+ * 后端会返回一张 1x1 占位 PNG 并带响应头 `X-Empty: 1`,前端据此显示空态文案。
+ * 调用方负责在不再需要时 `URL.revokeObjectURL(url)`。
+ */
+export async function previewQuestion(
+  docId: string,
+  payload: PreviewRequest,
+): Promise<PreviewResult> {
+  const resp = await fetch(`${API}/preview/${docId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const msg = await safeError(resp);
+    throw new Error(msg);
+  }
+  const empty = resp.headers.get("X-Empty") === "1";
+  const blob = await resp.blob();
+  return { url: URL.createObjectURL(blob), empty };
 }
 
 async function safeError(resp: Response): Promise<string> {

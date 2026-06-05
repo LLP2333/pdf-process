@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { uploadPdf, exportFile, type ExportRequest } from "../src/api";
+import { uploadPdf, exportFile, previewQuestion, type ExportRequest } from "../src/api";
 
 describe("api.ts", () => {
   beforeEach(() => {
@@ -53,6 +53,7 @@ describe("api.ts", () => {
     const payload: ExportRequest = {
       format: "pdf",
       margin: 28,
+      auto_trim: true,
       questions: [{ no: 1, segments: [{ page: 0, y1: 0, y2: 10 }] }],
     };
     const res = await exportFile("doc1", payload);
@@ -68,6 +69,7 @@ describe("api.ts", () => {
     const r = await exportFile("d", {
       format: "pptx",
       margin: 28,
+      auto_trim: true,
       questions: [{ no: 1, segments: [{ page: 0, y1: 0, y2: 10 }] }],
     });
     expect(r.filename).toBe("试卷切割重组.pptx");
@@ -82,7 +84,46 @@ describe("api.ts", () => {
       exportFile("missing", {
         format: "pdf",
         margin: 28,
+        auto_trim: true,
         questions: [{ no: 1, segments: [{ page: 0, y1: 0, y2: 10 }] }],
+      })
+    ).rejects.toThrow("文档不存在或已过期");
+  });
+
+  it("previewQuestion 返回 object URL,空响应保留 empty=true", async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: () => "blob:fake-url",
+      revokeObjectURL: () => undefined,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(blob, {
+            status: 200,
+            headers: { "X-Empty": "1" },
+          })
+      )
+    );
+    const r = await previewQuestion("doc1", {
+      question: { no: 1, segments: [{ page: 0, y1: 0, y2: 10 }] },
+      auto_trim: true,
+    });
+    expect(r.url).toBe("blob:fake-url");
+    expect(r.empty).toBe(true);
+  });
+
+  it("previewQuestion 失败时抛出后端 detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: "文档不存在或已过期" }), { status: 404 }))
+    );
+    await expect(
+      previewQuestion("missing", {
+        question: { no: 1, segments: [{ page: 0, y1: 0, y2: 10 }] },
+        auto_trim: true,
       })
     ).rejects.toThrow("文档不存在或已过期");
   });

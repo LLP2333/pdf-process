@@ -5,9 +5,18 @@ import type { Question } from "../types";
 interface Props {
   docId: string;
   questions: Question[];
+  autoTrim: boolean;
+  onAutoTrimChange: (value: boolean) => void;
 }
 
-export default function ExportPanel({ docId, questions }: Props) {
+/**
+ * 导出面板:被 App 挂在侧栏顶部。
+ *
+ * 包含「自动去白边」开关 + 页面留白 + 导出 PDF / PPTX 按钮。
+ * 校验:若全部题目都没有有效区域(理论上不会,因为分割线推导至少 1 题),
+ * 仍保留兜底校验,失败时直接展示错误文案,不发起请求。
+ */
+export default function ExportPanel({ docId, questions, autoTrim, onAutoTrimChange }: Props) {
   const [margin, setMargin] = useState(28);
   const [busy, setBusy] = useState<"pdf" | "pptx" | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -16,7 +25,7 @@ export default function ExportPanel({ docId, questions }: Props) {
     if (busy) return;
     const valid = questions.filter((q) => q.segments.length > 0);
     if (valid.length === 0) {
-      setMsg({ kind: "err", text: "请先至少为一道题设置起止行" });
+      setMsg({ kind: "err", text: "请先在 PDF 上添加分割线" });
       return;
     }
     setBusy(format);
@@ -25,6 +34,7 @@ export default function ExportPanel({ docId, questions }: Props) {
       const { blob, filename, count } = await exportFile(docId, {
         format,
         margin,
+        auto_trim: autoTrim,
         questions: valid,
       });
       const url = URL.createObjectURL(blob);
@@ -45,8 +55,17 @@ export default function ExportPanel({ docId, questions }: Props) {
 
   return (
     <div className="export">
-      <label className="margin-line">
-        页面留白(pt)
+      <div className="export-head">导出</div>
+      <label className="export-row">
+        <input
+          type="checkbox"
+          checked={autoTrim}
+          onChange={(e) => onAutoTrimChange(e.target.checked)}
+        />
+        <span>自动去除题目上下白边</span>
+      </label>
+      <label className="export-row">
+        <span>页面留白(pt)</span>
         <input
           type="number"
           min={0}

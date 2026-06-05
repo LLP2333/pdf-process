@@ -1,158 +1,116 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import UploadPanel from "./components/UploadPanel";
 import PdfPage from "./components/PdfPage";
 import QuestionList from "./components/QuestionList";
 import ExportPanel from "./components/ExportPanel";
-import type { AppDoc, Question } from "./types";
+import PreviewPanel from "./components/PreviewPanel";
+import { buildQuestionsFromDividers, newDividerId } from "./dividers";
+import type { AppDoc, Divider } from "./types";
+
+const MIN_DIVIDER_GAP_PT = 6; // 同页两条分割线最小间距(pt),避免误点
 
 export default function App() {
   const [doc, setDoc] = useState<AppDoc | null>(null);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [activeQuestion, setActiveQuestion] = useState<number | null>(null);
-  const [activeSegment, setActiveSegment] = useState<number | null>(null);
+  const [dividers, setDividers] = useState<Divider[]>([]);
+  const [autoTrim, setAutoTrim] = useState(true);
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState<number | null>(null);
+  const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
-  function reset() {
+  const questions = useMemo(
+    () => (doc ? buildQuestionsFromDividers(dividers, doc.pages) : []),
+    [doc, dividers],
+  );
+
+  const reset = useCallback(() => {
     setDoc(null);
-    setQuestions([]);
-    setActiveQuestion(null);
-    setActiveSegment(null);
-  }
+    setDividers([]);
+    setActiveQuestionIndex(null);
+  }, []);
 
-  function addQuestion() {
-    const nextNo = (questions[questions.length - 1]?.no ?? 0) + 1;
-    setQuestions((prev) => {
-      const next = [...prev, { no: nextNo, segments: [] }];
-      setActiveQuestion(next.length - 1);
-      setActiveSegment(null);
-      return next;
-    });
-  }
+  const onUploaded = useCallback((d: AppDoc) => {
+    setDoc(d);
+    setDividers([]);
+    setActiveQuestionIndex(null);
+  }, []);
 
-  function removeQuestion(qi: number) {
-    setQuestions((prev) => prev.filter((_, i) => i !== qi));
-    setActiveQuestion(null);
-    setActiveSegment(null);
-  }
+  const addDivider = useCallback(
+    (page: number, y: number) => {
+      if (!doc) return;
+      const pageInfo = doc.pages[page];
+      if (!pageInfo) return;
+      const clamped = Math.max(1, Math.min(pageInfo.height - 1, y));
+      const tooClose = dividers.some(
+        (d) => d.page === page && Math.abs(d.y - clamped) < MIN_DIVIDER_GAP_PT,
+      );
+      if (tooClose) return;
+      setDividers((prev) => [...prev, { id: newDividerId(), page, y: clamped }]);
+    },
+    [doc, dividers],
+  );
 
-  function removeSegment(qi: number, si: number) {
-    setQuestions((prev) =>
-      prev.map((q, i) => (i === qi ? { ...q, segments: q.segments.filter((_, j) => j !== si) } : q))
-    );
-    setActiveSegment(null);
-  }
+  const removeDivider = useCallback((id: string) => {
+    setDividers((prev) => prev.filter((d) => d.id !== id));
+  }, []);
 
-  function selectSegment(qi: number, si: number) {
-    setActiveQuestion(qi);
-    setActiveSegment(si);
-  }
+  const moveDivider = useCallback(
+    (id: string, y: number) => {
+      if (!doc) return;
+      setDividers((prev) =>
+        prev.map((d) => {
+          if (d.id !== id) return d;
+          const pageInfo = doc.pages[d.page];
+          if (!pageInfo) return d;
+          const clamped = Math.max(1, Math.min(pageInfo.height - 1, y));
+          return { ...d, y: clamped };
+        }),
+      );
+    },
+    [doc],
+  );
 
-  function renumber() {
-    setQuestions((prev) => prev.map((q, i) => ({ ...q, no: i + 1 })));
-  }
+  const clearDividers = useCallback(() => {
+    setDividers([]);
+    setActiveQuestionIndex(null);
+  }, []);
 
-  function addSegmentInPage(page: number) {
-    if (activeQuestion === null || !doc) {
-      addQuestionAndAddSegment(page);
-      return;
-    }
-    const pageInfo = doc.pages[page];
-    if (!pageInfo) return;
-    const y1 = pageInfo.height * 0.1;
-    const y2 = pageInfo.height * 0.4;
-    let newSegIdx = 0;
-    setQuestions((prev) =>
-      prev.map((q, i) => {
-        if (i !== activeQuestion) return q;
-        newSegIdx = q.segments.length;
-        return { ...q, segments: [...q.segments, { page, y1, y2 }] };
-      })
-    );
-    setActiveSegment(newSegIdx);
-  }
-
-  function addQuestionAndAddSegment(page: number) {
-    if (!doc) return;
-    const pageInfo = doc.pages[page];
-    if (!pageInfo) return;
-    const nextNo = (questions[questions.length - 1]?.no ?? 0) + 1;
-    const seg = { page, y1: pageInfo.height * 0.1, y2: pageInfo.height * 0.4 };
-    setQuestions((prev) => {
-      const next = [...prev, { no: nextNo, segments: [seg] }];
-      setActiveQuestion(next.length - 1);
-      setActiveSegment(0);
-      return next;
-    });
-  }
-
-  function clickPage(page: number, yPdf: number, shift: boolean) {
-    if (activeQuestion === null) {
-      addQuestionAndAddSegment(page);
-      return;
-    }
-    setQuestions((prev) => {
-      const next = prev.map((q) => ({ ...q, segments: [...q.segments] }));
-      const q = next[activeQuestion];
-      // 找当前题在该页是否已有段;没有就新建一段
-      let segIdx = q.segments.findIndex((s) => s.page === page);
-      if (segIdx === -1) {
-        const seg = { page, y1: shift ? yPdf : Math.max(0, yPdf - 60), y2: shift ? Math.min(yPdf + 60, doc!.pages[page].height) : yPdf };
-        q.segments.push(seg);
-        segIdx = q.segments.length - 1;
-      } else {
-        const seg = { ...q.segments[segIdx] };
-        if (shift) seg.y1 = yPdf;
-        else seg.y2 = yPdf;
-        // 保持 y1 < y2
-        if (seg.y1 > seg.y2) {
-          const t = seg.y1;
-          seg.y1 = seg.y2;
-          seg.y2 = t;
-        }
-        q.segments[segIdx] = seg;
+  const handleSelectQuestion = useCallback(
+    (qi: number) => {
+      setActiveQuestionIndex(qi);
+      const q = questions[qi];
+      const firstSeg = q?.segments[0];
+      if (firstSeg) {
+        const el = pageRefs.current[firstSeg.page];
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
-      setActiveSegment(segIdx);
-      return next;
-    });
-  }
+    },
+    [questions],
+  );
 
-  function dragLine(qi: number, si: number, edge: "y1" | "y2", yPdf: number) {
-    setQuestions((prev) =>
-      prev.map((q, i) => {
-        if (i !== qi) return q;
-        const segs = q.segments.map((s, j) => {
-          if (j !== si) return s;
-          const ns = { ...s, [edge]: yPdf } as typeof s;
-          if (ns.y1 > ns.y2) {
-            const t = ns.y1;
-            ns.y1 = ns.y2;
-            ns.y2 = t;
-          }
-          return ns;
-        });
-        return { ...q, segments: segs };
-      })
-    );
-    setActiveQuestion(qi);
-    setActiveSegment(si);
-  }
+  useEffect(() => {
+    if (activeQuestionIndex !== null && activeQuestionIndex >= questions.length) {
+      setActiveQuestionIndex(null);
+    }
+  }, [activeQuestionIndex, questions.length]);
 
   const pageView = useMemo(() => {
     if (!doc) return null;
     return doc.pages.map((p) => (
       <PdfPage
         key={p.index}
+        ref={(el) => {
+          pageRefs.current[p.index] = el;
+        }}
         page={p}
+        dividers={dividers}
         questions={questions}
-        activeQuestion={activeQuestion}
-        activeSegment={activeSegment}
-        onClickPage={clickPage}
-        onDragLine={dragLine}
-        onAddSegmentInPage={addSegmentInPage}
-        onSelectSegment={selectSegment}
+        activeQuestionIndex={activeQuestionIndex}
+        onAddDivider={addDivider}
+        onRemoveDivider={removeDivider}
+        onMoveDivider={moveDivider}
+        onSelectQuestion={setActiveQuestionIndex}
       />
     ));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, questions, activeQuestion, activeSegment]);
+  }, [doc, dividers, questions, activeQuestionIndex, addDivider, removeDivider, moveDivider]);
 
   return (
     <div className="app">
@@ -166,6 +124,8 @@ export default function App() {
             <span>{doc.filename}</span>
             <span className="dot">·</span>
             <span>{doc.pages.length} 页</span>
+            <span className="dot">·</span>
+            <span>{questions.length} 题</span>
             <button className="mini ghost" onClick={reset}>
               重新上传
             </button>
@@ -177,27 +137,39 @@ export default function App() {
         <main className="hero">
           <h1>把整张试卷按题号切成一题一页</h1>
           <p>
-            上传一份文字型 PDF,然后在每道题上双击设置<b>结束行</b>(Shift+双击 设置<b>起始行</b>),
-            导出为<b>横版 A4 PDF</b> 或 <b>16:9 PPTX</b>,方便课堂讲解与书写。
+            上传一份文字型 PDF,在每道题的<b>分界处单击鼠标</b>即可加一条分割线,
+            拖动调整位置、Shift+单击 或 × 删除。两条分割线之间就是一道题,
+            后端会自动裁掉上下白边并导出 <b>横版 A4 PDF</b> / <b>16:9 PPTX</b>。
           </p>
-          <UploadPanel onUploaded={setDoc} />
+          <UploadPanel onUploaded={onUploaded} />
         </main>
       ) : (
         <main className="workspace">
-          <aside className="side">
+          <aside className="side side-left">
+            <ExportPanel
+              docId={doc.docId}
+              questions={questions}
+              autoTrim={autoTrim}
+              onAutoTrimChange={setAutoTrim}
+            />
             <QuestionList
               questions={questions}
-              activeQuestion={activeQuestion}
-              activeSegment={activeSegment}
-              onSelectSegment={selectSegment}
-              onAddQuestion={addQuestion}
-              onRemoveQuestion={removeQuestion}
-              onRemoveSegment={removeSegment}
-              onRenumber={renumber}
+              activeQuestionIndex={activeQuestionIndex}
+              onSelectQuestion={handleSelectQuestion}
+              onClearDividers={clearDividers}
+              dividerCount={dividers.length}
             />
-            <ExportPanel docId={doc.docId} questions={questions} />
           </aside>
           <section className="pages">{pageView}</section>
+          <aside className="side side-right">
+            <PreviewPanel
+              docId={doc.docId}
+              questions={questions}
+              autoTrim={autoTrim}
+              activeQuestionIndex={activeQuestionIndex}
+              onSelectQuestion={handleSelectQuestion}
+            />
+          </aside>
         </main>
       )}
     </div>

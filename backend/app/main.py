@@ -10,7 +10,8 @@
 - `GET  /api/health`               健康检查
 - `POST /api/upload`               上传 PDF,返回 doc_id 与每页预览 PNG 的 URL / 尺寸
 - `GET  /api/pages/{doc_id}/{name}` 静态返回上一接口产生的预览 PNG
-- `POST /api/export/{doc_id}`       按 {format, margin, questions} 矢量裁剪并下载产物
+- `POST /api/preview/{doc_id}`     单题实时预览(纵向拼接成单张 PNG)
+- `POST /api/export/{doc_id}`       按 {format, margin, auto_trim, questions} 矢量裁剪并下载产物
 """
 from __future__ import annotations
 
@@ -21,10 +22,10 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from . import pdf_service, ppt_service, storage
-from .schemas import ExportRequest, UploadResponse
+from .schemas import ExportRequest, PreviewRequest, UploadResponse
 
 
 @asynccontextmanager
@@ -127,11 +128,46 @@ def page_image(doc_id: str, name: str) -> FileResponse:
 
 
 @app.post(
+    "/api/preview/{doc_id}",
+    summary="单题实时预览(返回 PNG)",
+    description=(
+        "前端在 PDF 上调整分割线时,会以此接口拉取每道题的纵向拼接预览图。"
+        "请求体 `{question, auto_trim}`,响应 `image/png`,响应头 `X-Empty: 1` 标示该题无有效区域。"
+    ),
+    responses={
+        200: {"description": "返回预览 PNG"},
+        404: {"description": "doc_id 不存在或已过期"},
+    },
+)
+def preview(doc_id: str, payload: PreviewRequest) -> Response:
+    """渲染单题预览。返回 1x1 透明 PNG 时附带 `X-Empty: 1`,前端据此显示空态。"""
+    in_path = storage.upload_path(doc_id)
+    if not in_path.exists():
+        raise HTTPException(status_code=404, detail="文档不存在或已过期")
+    try:
+        png = pdf_service.render_question_preview(
+            in_path, payload.question, auto_trim=payload.auto_trim
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"生成预览失败:{exc}") from exc
+    if not png:
+        # 用最小占位 PNG + X-Empty 标志位告诉前端「这题没东西」,避免 4xx 报警
+        empty = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xcf"
+            b"\xc0\xf0\x1f\x00\x05\x00\x01\xff\xfe\xb7\xc2\x1a\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        return Response(content=empty, media_type="image/png", headers={"X-Empty": "1"})
+    return Response(content=png, media_type="image/png")
+
+
+@app.post(
     "/api/export/{doc_id}",
     summary="按切分方案导出 PDF / PPTX",
     description=(
-        "接收 `{format, margin, questions}`;`questions` 中每题的 `segments` 用 PDF "
+        "接收 `{format, margin, auto_trim, questions}`;`questions` 中每题的 `segments` 用 PDF "
         "原始坐标(pt)给出 `(page, y1, y2)`,横向默认整页宽。"
+        "`auto_trim=true` 时,后端会在裁剪前对每段做像素扫描去掉上下白边。"
         "返回:`application/pdf` 或 PPTX 二进制,响应头含 `X-Question-Count` "
         "标示成功生成的题目数,且 `Content-Disposition` 使用 RFC 5987 编码。"
     ),
@@ -149,6 +185,7 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
       产物保留公式 / 表格 / 图形原貌,一题一页(横版 A4)。
     - `format == "pptx"`:把每段以 220 DPI 渲染为 PNG 后插入 16:9 幻灯片,
       题区置顶居中,下方留白方便讲解书写。
+    - `auto_trim`:开启后逐段去除上下白边,题目内容会被放大到可用区,适合课堂投影。
     - `made == 0` 视为「切分方案没有任何有效区域」(可能 y1==y2、page 越界),
       返回 422 给前端提示。
     """
@@ -159,7 +196,9 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
     if payload.format == "pdf":
         out_path = storage.export_path(doc_id, "pdf")
         try:
-            made = pdf_service.build_pdf(in_path, out_path, payload.questions, payload.margin)
+            made = pdf_service.build_pdf(
+                in_path, out_path, payload.questions, payload.margin, auto_trim=payload.auto_trim
+            )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"导出 PDF 失败:{exc}") from exc
         media = "application/pdf"
@@ -167,7 +206,9 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
     else:
         out_path = storage.export_path(doc_id, "pptx")
         try:
-            made = ppt_service.build_pptx(in_path, out_path, payload.questions, payload.margin)
+            made = ppt_service.build_pptx(
+                in_path, out_path, payload.questions, payload.margin, auto_trim=payload.auto_trim
+            )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"导出 PPTX 失败:{exc}") from exc
         media = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
