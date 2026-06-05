@@ -1,12 +1,12 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { Stage, Layer, Image as KImage, Line, Circle, Rect, Text, Group } from "react-konva";
 import type Konva from "konva";
-import type { Divider, PageInfo, Question } from "../types";
+import type { DerivedQuestion, Divider, PageInfo } from "../types";
 
 interface Props {
   page: PageInfo;
   dividers: Divider[];
-  questions: Question[];
+  questions: DerivedQuestion[];
   activeQuestionIndex: number | null;
   /** 单击空白处:在该页 y 处新建一条分割线。 */
   onAddDivider: (page: number, y: number) => void;

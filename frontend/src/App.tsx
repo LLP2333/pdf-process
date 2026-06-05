@@ -3,20 +3,23 @@ import UploadPanel from "./components/UploadPanel";
 import PdfPage from "./components/PdfPage";
 import QuestionList from "./components/QuestionList";
 import ExportPanel from "./components/ExportPanel";
-import PreviewPanel from "./components/PreviewPanel";
+import PreviewModal from "./components/PreviewModal";
 import { buildQuestionsFromDividers, newDividerId } from "./dividers";
-import type { AppDoc, Divider } from "./types";
+import type { Adjustment, AppDoc, Divider } from "./types";
 
-const MIN_DIVIDER_GAP_PT = 6; // 同页两条分割线最小间距(pt),避免误点
+const MIN_DIVIDER_GAP_PT = 6;
 
 export default function App() {
   const [doc, setDoc] = useState<AppDoc | null>(null);
   const [dividers, setDividers] = useState<Divider[]>([]);
   const [autoTrim, setAutoTrim] = useState(true);
+  const [margin, setMargin] = useState(28);
+  const [adjustments, setAdjustments] = useState<Record<string, Adjustment>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState<number | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
-  const questions = useMemo(
+  const derivedQuestions = useMemo(
     () => (doc ? buildQuestionsFromDividers(dividers, doc.pages) : []),
     [doc, dividers],
   );
@@ -24,12 +27,15 @@ export default function App() {
   const reset = useCallback(() => {
     setDoc(null);
     setDividers([]);
+    setAdjustments({});
     setActiveQuestionIndex(null);
+    setShowPreview(false);
   }, []);
 
   const onUploaded = useCallback((d: AppDoc) => {
     setDoc(d);
     setDividers([]);
+    setAdjustments({});
     setActiveQuestionIndex(null);
   }, []);
 
@@ -70,27 +76,49 @@ export default function App() {
 
   const clearDividers = useCallback(() => {
     setDividers([]);
+    setAdjustments({});
     setActiveQuestionIndex(null);
   }, []);
 
   const handleSelectQuestion = useCallback(
     (qi: number) => {
       setActiveQuestionIndex(qi);
-      const q = questions[qi];
+      const q = derivedQuestions[qi];
       const firstSeg = q?.segments[0];
       if (firstSeg) {
         const el = pageRefs.current[firstSeg.page];
         el?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     },
-    [questions],
+    [derivedQuestions],
   );
 
+  const setAdjustmentFor = useCallback((id: string, adj: Adjustment) => {
+    setAdjustments((prev) => {
+      const next = { ...prev };
+      if (adj.top <= 0 && adj.bottom <= 0) delete next[id];
+      else next[id] = adj;
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
-    if (activeQuestionIndex !== null && activeQuestionIndex >= questions.length) {
+    if (activeQuestionIndex !== null && activeQuestionIndex >= derivedQuestions.length) {
       setActiveQuestionIndex(null);
     }
-  }, [activeQuestionIndex, questions.length]);
+  }, [activeQuestionIndex, derivedQuestions.length]);
+
+  // 清理孤儿 adjustments(对应分割线已被删除)
+  useEffect(() => {
+    const validIds = new Set(derivedQuestions.map((q) => q.id));
+    let dirty = false;
+    const next: Record<string, Adjustment> = {};
+    for (const [k, v] of Object.entries(adjustments)) {
+      if (validIds.has(k)) next[k] = v;
+      else dirty = true;
+    }
+    if (dirty) setAdjustments(next);
+  }, [derivedQuestions, adjustments]);
 
   const pageView = useMemo(() => {
     if (!doc) return null;
@@ -102,7 +130,7 @@ export default function App() {
         }}
         page={p}
         dividers={dividers}
-        questions={questions}
+        questions={derivedQuestions}
         activeQuestionIndex={activeQuestionIndex}
         onAddDivider={addDivider}
         onRemoveDivider={removeDivider}
@@ -110,7 +138,15 @@ export default function App() {
         onSelectQuestion={setActiveQuestionIndex}
       />
     ));
-  }, [doc, dividers, questions, activeQuestionIndex, addDivider, removeDivider, moveDivider]);
+  }, [
+    doc,
+    dividers,
+    derivedQuestions,
+    activeQuestionIndex,
+    addDivider,
+    removeDivider,
+    moveDivider,
+  ]);
 
   return (
     <div className="app">
@@ -125,7 +161,9 @@ export default function App() {
             <span className="dot">·</span>
             <span>{doc.pages.length} 页</span>
             <span className="dot">·</span>
-            <span>{questions.length} 题</span>
+            <span>{dividers.length} 条分割线</span>
+            <span className="dot">·</span>
+            <span>{derivedQuestions.length} 题</span>
             <button className="mini ghost" onClick={reset}>
               重新上传
             </button>
@@ -137,9 +175,9 @@ export default function App() {
         <main className="hero">
           <h1>把整张试卷按题号切成一题一页</h1>
           <p>
-            上传一份文字型 PDF,在每道题的<b>分界处单击鼠标</b>即可加一条分割线,
-            拖动调整位置、Shift+单击 或 × 删除。两条分割线之间就是一道题,
-            后端会自动裁掉上下白边并导出 <b>横版 A4 PDF</b> / <b>16:9 PPTX</b>。
+            上传一份文字型 PDF,在每道题的<b>开头</b>和<b>结尾</b>各画一条水平分割线,
+            两条相邻分割线之间的内容就是一道题。点「预览」可以二次裁剪上下边界
+            (例如去掉页眉/页码),最后一键导出 <b>横版 A4 PDF</b> / <b>16:9 PPTX</b>。
           </p>
           <UploadPanel onUploaded={onUploaded} />
         </main>
@@ -147,30 +185,37 @@ export default function App() {
         <main className="workspace">
           <aside className="side side-left">
             <ExportPanel
-              docId={doc.docId}
-              questions={questions}
+              questionCount={derivedQuestions.length}
               autoTrim={autoTrim}
               onAutoTrimChange={setAutoTrim}
+              margin={margin}
+              onMarginChange={setMargin}
+              onOpenPreview={() => setShowPreview(true)}
             />
             <QuestionList
-              questions={questions}
+              questions={derivedQuestions}
               activeQuestionIndex={activeQuestionIndex}
               onSelectQuestion={handleSelectQuestion}
               onClearDividers={clearDividers}
               dividerCount={dividers.length}
+              adjustments={adjustments}
             />
           </aside>
           <section className="pages">{pageView}</section>
-          <aside className="side side-right">
-            <PreviewPanel
-              docId={doc.docId}
-              questions={questions}
-              autoTrim={autoTrim}
-              activeQuestionIndex={activeQuestionIndex}
-              onSelectQuestion={handleSelectQuestion}
-            />
-          </aside>
         </main>
+      )}
+
+      {doc && (
+        <PreviewModal
+          open={showPreview}
+          docId={doc.docId}
+          derivedQuestions={derivedQuestions}
+          autoTrim={autoTrim}
+          margin={margin}
+          adjustments={adjustments}
+          onAdjustmentChange={setAdjustmentFor}
+          onClose={() => setShowPreview(false)}
+        />
       )}
     </div>
   );

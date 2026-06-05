@@ -1,41 +1,42 @@
-import type { Divider, PageInfo, Question } from "./types";
+import type {
+  Adjustment,
+  DerivedQuestion,
+  Divider,
+  PageInfo,
+  Question,
+} from "./types";
 
 /**
- * 把 PDF 全文档当作一根纵向"长卷",分割线之间的内容为一道题。
+ * 把"两条相邻分割线之间"识别为一道题。
  *
- * 输入:用户在每页画的水平分割线集合(乱序也无所谓)+ 各页元信息。
- * 输出:按题号 1..N 升序排列的 `Question` 数组,跨页时拆成多段 `Segment`。
- *
- * Why 在前端做这一层推导:
- * - 后端 API 还是按 `Question[]` + `Segment[]` 接收,不改既有契约;
- * - 单击/拖动分割线是高频操作,放前端推导无需往返。
+ * 设计要点:
+ * - **不再使用文档首末作为隐式边界**:第一条分割线以上、最后一条分割线以下的内容
+ *   不会被纳入任何题目(这样用户可以用第一条线"裁掉页眉",最后一条线"裁掉页脚")。
+ * - N 条分割线 ⇒ 至多 N-1 道题;少于 2 条分割线时返回空数组。
+ * - 跨页时拆成多段 `Segment`,与后端契约保持一致。
+ * - 每道题附带稳定 `id = ${aDividerId}|${bDividerId}`(排序后),
+ *   方便外层挂载二次裁剪等本地状态。
  */
 export function buildQuestionsFromDividers(
   dividers: Divider[],
   pages: PageInfo[],
-): Question[] {
-  if (pages.length === 0) return [];
+): DerivedQuestion[] {
+  if (pages.length === 0 || dividers.length < 2) return [];
 
   const sorted = [...dividers].sort((a, b) =>
     a.page === b.page ? a.y - b.y : a.page - b.page,
   );
-  const lastPage = pages.length - 1;
-  const boundaries: { page: number; y: number }[] = [
-    { page: 0, y: 0 },
-    ...sorted.map((d) => ({ page: d.page, y: d.y })),
-    { page: lastPage, y: pages[lastPage].height },
-  ];
 
-  const questions: Question[] = [];
-  for (let i = 0; i < boundaries.length - 1; i++) {
-    const a = boundaries[i];
-    const b = boundaries[i + 1];
+  const out: DerivedQuestion[] = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
     const segments = segmentsBetween(a, b, pages);
     if (segments.length > 0) {
-      questions.push({ no: questions.length + 1, segments });
+      out.push({ id: `${a.id}|${b.id}`, no: out.length + 1, segments });
     }
   }
-  return questions;
+  return out;
 }
 
 function segmentsBetween(
@@ -59,24 +60,33 @@ function segmentsBetween(
 }
 
 /**
- * 给定一个 divider 索引,返回 (推导出的) 与其紧邻的两个题号:
- * 该分割线的上方是第 N 题、下方是第 N+1 题。`null` 表示没有上/下题(罕见空白边界)。
+ * 把单题的"顶部/底部再裁"应用到 segments,得到上传给后端的纯净 `Question`。
+ *
+ * 顶部裁剪作用在第一段的 y1(向下推);底部裁剪作用在最后一段的 y2(向上拉)。
+ * 若裁过头(段内 y1 ≥ y2)整段会被丢弃;若所有段都被裁没,返回 `segments=[]`,
+ * 调用方应当过滤掉这种题。
  */
-export function neighborQuestionsOfDivider(
-  divider: Divider,
-  dividers: Divider[],
-  pages: PageInfo[],
-): { above: number | null; below: number | null } {
-  const questions = buildQuestionsFromDividers(dividers, pages);
-  const sorted = [...dividers].sort((a, b) =>
-    a.page === b.page ? a.y - b.y : a.page - b.page,
-  );
-  const idx = sorted.findIndex((d) => d.id === divider.id);
-  if (idx === -1) return { above: null, below: null };
-  return {
-    above: questions[idx]?.no ?? null,
-    below: questions[idx + 1]?.no ?? null,
-  };
+export function applyAdjustmentToQuestion(
+  q: DerivedQuestion,
+  adj: Adjustment | undefined,
+): Question {
+  const cleaned: Question["segments"] = q.segments.map((s) => ({
+    page: s.page,
+    y1: Math.min(s.y1, s.y2),
+    y2: Math.max(s.y1, s.y2),
+  }));
+  if (!adj || (!adj.top && !adj.bottom)) {
+    return { no: q.no, segments: cleaned };
+  }
+  if (adj.top > 0 && cleaned.length > 0) {
+    cleaned[0] = { ...cleaned[0], y1: cleaned[0].y1 + adj.top };
+  }
+  if (adj.bottom > 0 && cleaned.length > 0) {
+    const last = cleaned[cleaned.length - 1];
+    cleaned[cleaned.length - 1] = { ...last, y2: last.y2 - adj.bottom };
+  }
+  const valid = cleaned.filter((s) => s.y2 - s.y1 >= 1);
+  return { no: q.no, segments: valid };
 }
 
 /** 生成稳定 id(jsdom + 浏览器都可用)。 */

@@ -3,6 +3,26 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-06-05 (下午)
+
+- **修复语义 bug**:`buildQuestionsFromDividers` 不再把文档首末视为隐式边界。
+  现在 N 条分割线产生 **N-1 道题**(且至少需要 2 条),第一条线以上、最后一条线以下的内容
+  会被自动忽略 —— 用户可借此排除页眉 / 页脚 / 页码。
+- **预览改为弹窗 + 二次裁剪**:
+  - 移除右侧 `PreviewPanel`,改回两列布局。
+  - 导出面板挂上「预览裁剪效果」按钮,点开 `PreviewModal`:逐题展示拼接 PNG,
+    每张图下方有「顶部再裁(pt)」「底部再裁(pt)」两个滑块 + 数字输入,
+    实时刷新该题预览;弹窗底部直接「确认并导出 PDF / PPTX」。
+  - `App` 增加 `adjustments: Record<questionId, {top,bottom}>` state;
+    每道派生题目带稳定 `id = ${prevDivId}|${nextDivId}`,二次裁剪能跨编辑保留,
+    分割线被删时孤儿 adjustments 会被清理。
+  - `applyAdjustmentToQuestion`:把 top/bottom 加到第一/末段的 y1/y2;过度裁剪时丢弃越界段。
+- 文案微调:
+  - 「页面留白(pt)」→「页边距(pt)」,加 tooltip 解释。
+  - `QuestionList` 题目卡片「N 段」→「跨 N 页(pX,pY)」或「第 N 页」更直观;有二次裁剪显示 ✎ 角标。
+- 测试:前端 +8 用例(`dividers` 推导新语义 + `applyAdjustmentToQuestion` + `PreviewModal` 5 个);
+  共 **前端 33 passed / 后端 30 passed**。
+
 ## 2026-06-05
 
 - 交互模型重构:从「画起止行」改为「单击加分割线」。

@@ -48,10 +48,10 @@ cd backend
 | 文件 | 覆盖点 |
 | --- | --- |
 | `api.test.ts` | uploadPdf 成功/失败;exportFile 解析中文 Content-Disposition、回退默认名、错误抽取;`previewQuestion` 解析 `X-Empty` / 错误抽取 |
-| `dividers.test.ts` | `buildQuestionsFromDividers`:空状态、同页切分、跨页拆段、乱序排序、首端空区间过滤、空页面 |
-| `QuestionList.test.tsx` | 空状态、派生题目列表渲染、清空按钮禁用态、点击题目触发选中 |
-| `ExportPanel.test.tsx` | 无段时本地校验不发请求;有段时携带 `auto_trim` 字段发请求;复选框联动 |
-| `PreviewPanel.test.tsx` | 空状态文案;有题目时拉取并渲染图片;点击触发选中;`X-Empty` → 空态文案 |
+| `dividers.test.ts` | `buildQuestionsFromDividers`:0/1 条分割线返回空、N 条 → N-1 道题、跨页拆段、乱序排序、稳定 id;`applyAdjustmentToQuestion`:无调整 / 顶裁 / 底裁 / 过度裁剪丢弃越界段 |
+| `QuestionList.test.tsx` | 0/1 条分割线的两种引导文案、单页 vs「跨 N 页」标签、二次裁剪 ✎ 角标、清空按钮禁用、点击触发选中 |
+| `ExportPanel.test.tsx` | 无题时按钮禁用 + 文案;有题时按钮带题数 + 触发预览;auto_trim / margin 受控联动并被夹到 0-120 |
+| `PreviewModal.test.tsx` | open=false 不渲染;打开后渲染每题图片;改顶部滑块带 question id 触发回调;关闭回调;导出时 segments 已应用 adjustment |
 
 > `PdfPage` 重度依赖 `react-konva` + Canvas,jsdom 难以稳定测;暂以视觉手测为主,后续可考虑 Playwright e2e。
 
@@ -66,7 +66,7 @@ npm run build           # 顺带 tsc -b 严格类型检查
 
 ### 期望状态
 
-当前:**25 passed**;`npm run build` 通过。
+当前:**33 passed**;`npm run build` 通过。
 
 ## CI 建议
 

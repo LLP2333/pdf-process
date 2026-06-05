@@ -1,61 +1,31 @@
-import { useState } from "react";
-import { exportFile } from "../api";
-import type { Question } from "../types";
-
 interface Props {
-  docId: string;
-  questions: Question[];
+  questionCount: number;
   autoTrim: boolean;
   onAutoTrimChange: (value: boolean) => void;
+  margin: number;
+  onMarginChange: (value: number) => void;
+  /** 打开「预览 + 二次裁剪」弹窗;真正的导出在弹窗里完成。 */
+  onOpenPreview: () => void;
 }
 
 /**
- * 导出面板:被 App 挂在侧栏顶部。
+ * 导出准备面板:被挂在左栏顶部。
  *
- * 包含「自动去白边」开关 + 页面留白 + 导出 PDF / PPTX 按钮。
- * 校验:若全部题目都没有有效区域(理论上不会,因为分割线推导至少 1 题),
- * 仍保留兜底校验,失败时直接展示错误文案,不发起请求。
+ * 仅承担「设置导出参数 + 打开预览」两件事。真正的导出按钮放在 PreviewModal 内,
+ * 因为用户应当先看到裁剪效果(尤其是页眉/页脚是否被误带),再决定要不要落盘。
  */
-export default function ExportPanel({ docId, questions, autoTrim, onAutoTrimChange }: Props) {
-  const [margin, setMargin] = useState(28);
-  const [busy, setBusy] = useState<"pdf" | "pptx" | null>(null);
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-
-  async function go(format: "pdf" | "pptx") {
-    if (busy) return;
-    const valid = questions.filter((q) => q.segments.length > 0);
-    if (valid.length === 0) {
-      setMsg({ kind: "err", text: "请先在 PDF 上添加分割线" });
-      return;
-    }
-    setBusy(format);
-    setMsg(null);
-    try {
-      const { blob, filename, count } = await exportFile(docId, {
-        format,
-        margin,
-        auto_trim: autoTrim,
-        questions: valid,
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      setMsg({ kind: "ok", text: `已导出 ${count} 道题:${filename}` });
-    } catch (e: unknown) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "导出失败" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
+export default function ExportPanel({
+  questionCount,
+  autoTrim,
+  onAutoTrimChange,
+  margin,
+  onMarginChange,
+  onOpenPreview,
+}: Props) {
+  const disabled = questionCount === 0;
   return (
     <div className="export">
-      <div className="export-head">导出</div>
+      <div className="export-head">导出参数</div>
       <label className="export-row">
         <input
           type="checkbox"
@@ -64,26 +34,31 @@ export default function ExportPanel({ docId, questions, autoTrim, onAutoTrimChan
         />
         <span>自动去除题目上下白边</span>
       </label>
-      <label className="export-row">
-        <span>页面留白(pt)</span>
+      <label
+        className="export-row"
+        title="导出 PDF / PPTX 时,题区与纸面四边之间留出的空白(pt)。1 pt ≈ 0.353 mm"
+      >
+        <span>页边距(pt)</span>
         <input
           type="number"
           min={0}
           max={120}
           step={2}
           value={margin}
-          onChange={(e) => setMargin(Number(e.target.value) || 0)}
+          onChange={(e) => onMarginChange(Math.max(0, Math.min(120, Number(e.target.value) || 0)))}
         />
       </label>
-      <div className="export-btns">
-        <button className="btn primary" onClick={() => go("pdf")} disabled={busy !== null}>
-          {busy === "pdf" ? "导出中…" : "导出 PDF"}
-        </button>
-        <button className="btn" onClick={() => go("pptx")} disabled={busy !== null}>
-          {busy === "pptx" ? "导出中…" : "导出 PPTX"}
-        </button>
+      <button
+        className="btn primary export-preview-btn"
+        onClick={onOpenPreview}
+        disabled={disabled}
+        title={disabled ? "请先在 PDF 上添加至少两条分割线" : "查看裁剪效果并二次微调"}
+      >
+        {disabled ? "请先添加分割线" : `预览裁剪效果 (${questionCount} 题)`}
+      </button>
+      <div className="export-hint">
+        点开预览可<b>逐题微调上下边界</b>,确认无误后在弹窗内一键导出。
       </div>
-      {msg && <div className={"export-msg " + msg.kind}>{msg.text}</div>}
     </div>
   );
 }
