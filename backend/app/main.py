@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import re
+import shutil
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 from urllib.parse import quote
 
@@ -26,6 +28,14 @@ from fastapi.responses import FileResponse, Response
 
 from . import pdf_service, ppt_service, storage
 from .schemas import ExportRequest, PreviewRequest, UploadResponse
+
+# doc_id 严格白名单:必须是 `new_doc_id()` 生成的 16 位小写 hex,任何其它形式一律按"未找到"处理。
+# 这样可以阻止 `../`、绝对路径、过长字符串等路径遍历尝试,
+# 同时不向调用方泄露"非法路径"与"过期文档"的差异。
+_DOC_ID_RE = re.compile(r"^[a-f0-9]{16}$")
+
+# 上传分块大小,1MB 比较稳:既能尽早触达上限拒绝,也不会让 I/O 太碎。
+_UPLOAD_CHUNK = 1024 * 1024
 
 
 @asynccontextmanager
@@ -74,19 +84,46 @@ def health() -> dict[str, str]:
 async def upload(file: UploadFile = File(...)) -> UploadResponse:
     """上传 PDF 文件并立即解析为可预览的页图。
 
-    校验顺序:文件名后缀 → 文件非空 → PyMuPDF 能正常打开。
+    校验顺序:文件名后缀 → 流式写入(超 `MAX_UPLOAD_BYTES` 立刻 413) → 文件非空
+    → PyMuPDF 能正常打开 → 软上限校验(超 `MAX_STORAGE_BYTES` 时先 LRU 清理,清不下来则 507)。
     任意一步失败都会返回带中文说明的 HTTP 错误,前端可直接展示。
     """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
 
+    # 写之前先腾空间(过期清理 + 超容量 LRU),减少新文件被立刻拒绝的概率
+    storage.maintenance()
+
     doc_id = storage.new_doc_id()
     in_path = storage.upload_path(doc_id)
     in_path.parent.mkdir(parents=True, exist_ok=True)
-    data = await file.read()
-    if not data:
+
+    size = 0
+    try:
+        with in_path.open("wb") as f:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > storage.MAX_UPLOAD_BYTES:
+                    # 立刻丢半成品,避免攻击者刻意发超大流量塞满磁盘
+                    f.close()
+                    shutil.rmtree(in_path.parent, ignore_errors=True)
+                    mb = storage.MAX_UPLOAD_BYTES // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=413, detail=f"文件过大,单文件上限 {mb} MB"
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(in_path.parent, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"写入文件失败:{exc}") from exc
+
+    if size == 0:
+        shutil.rmtree(in_path.parent, ignore_errors=True)
         raise HTTPException(status_code=400, detail="空文件")
-    in_path.write_bytes(data)
 
     image_dir = storage.output_dir(doc_id)
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -97,15 +134,41 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
             image_url_prefix=f"/api/pages/{doc_id}",
         )
     except Exception as exc:  # noqa: BLE001 - 让前端看到具体原因
+        # 解析失败必须把半成品一并清掉,不留垃圾
+        shutil.rmtree(in_path.parent, ignore_errors=True)
+        shutil.rmtree(image_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=f"PDF 解析失败:{exc}") from exc
 
-    storage.maintenance()
+    # 软上限兜底:这次上传把总占用顶过软上限,先 LRU 清一轮;清不下来就回滚返回 507
+    if storage.storage_usage_bytes() > storage.MAX_STORAGE_BYTES:
+        storage.maintenance()
+        if storage.storage_usage_bytes() > storage.MAX_STORAGE_BYTES:
+            shutil.rmtree(in_path.parent, ignore_errors=True)
+            shutil.rmtree(image_dir, ignore_errors=True)
+            mb = storage.MAX_STORAGE_BYTES // (1024 * 1024)
+            raise HTTPException(
+                status_code=507, detail=f"存储空间不足,请稍后再试(总上限 {mb} MB)"
+            )
+
     return UploadResponse(
         doc_id=doc_id,
         filename=file.filename,
         page_count=len(pages),
         pages=pages,
     )
+
+
+def _require_doc(doc_id: str) -> Path:
+    """统一的 doc_id 安全闸:格式不合法 / 源文件不存在 → 统一 404。
+
+    用单一错误码避免攻击者通过响应差异区分"路径非法"与"已过期"。
+    """
+    if not _DOC_ID_RE.match(doc_id):
+        raise HTTPException(status_code=404, detail="文档不存在或已过期")
+    in_path = storage.upload_path(doc_id)
+    if not in_path.exists():
+        raise HTTPException(status_code=404, detail="文档不存在或已过期")
+    return in_path
 
 
 # 预览 PNG 文件名白名单,防止路径遍历(只允许 `page_数字.png`)。
@@ -118,8 +181,8 @@ _NAME_RE = re.compile(r"^page_\d{3}\.png$")
     description="返回上传阶段渲染的某一页 PNG,文件名需匹配 `page_<3位数>.png`。",
 )
 def page_image(doc_id: str, name: str) -> FileResponse:
-    """读取 `outputs/<doc_id>/page_NNN.png`。命中白名单规则后再到磁盘上找。"""
-    if not _NAME_RE.match(name):
+    """读取 `outputs/<doc_id>/page_NNN.png`。命中双白名单(doc_id + name)后再到磁盘上找。"""
+    if not _DOC_ID_RE.match(doc_id) or not _NAME_RE.match(name):
         raise HTTPException(status_code=404, detail="not found")
     path = storage.output_dir(doc_id) / name
     if not path.exists():
@@ -141,9 +204,7 @@ def page_image(doc_id: str, name: str) -> FileResponse:
 )
 def preview(doc_id: str, payload: PreviewRequest) -> Response:
     """渲染单题预览。返回 1x1 透明 PNG 时附带 `X-Empty: 1`,前端据此显示空态。"""
-    in_path = storage.upload_path(doc_id)
-    if not in_path.exists():
-        raise HTTPException(status_code=404, detail="文档不存在或已过期")
+    in_path = _require_doc(doc_id)
     try:
         png = pdf_service.render_question_preview(
             in_path, payload.question, auto_trim=payload.auto_trim
@@ -189,9 +250,7 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
     - `made == 0` 视为「切分方案没有任何有效区域」(可能 y1==y2、page 越界),
       返回 422 给前端提示。
     """
-    in_path = storage.upload_path(doc_id)
-    if not in_path.exists():
-        raise HTTPException(status_code=404, detail="文档不存在或已过期")
+    in_path = _require_doc(doc_id)
 
     if payload.format == "pdf":
         out_path = storage.export_path(doc_id, "pdf")

@@ -28,6 +28,15 @@ EXAM_SPLITTER_DATA_DIR=$(cd .. && pwd) \
 | --- | --- | --- |
 | `EXAM_SPLITTER_DATA_DIR` | backend 上一级 | `uploads/`、`outputs/` 根目录 |
 | `EXAM_SPLITTER_RETENTION` | `86400`(24h) | doc 过期秒数,超时由 `storage.maintenance()` 清理 |
+| `EXAM_SPLITTER_MAX_UPLOAD_MB` | `64` | 单文件上传上限(MB),超出返回 413 |
+| `EXAM_SPLITTER_MAX_STORAGE_MB` | `2048`(2GB) | `uploads + outputs` 总占用软上限;超出按 LRU 清理保护期外的旧 doc,清不下来时本次上传 507 |
+| `EXAM_SPLITTER_PROTECT_SECONDS` | `300`(5min) | LRU 清理保护期:最近 N 秒动过的 doc 不会被强制清理 |
+
+前端容器(`nginx`)同步可配:
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `CLIENT_MAX_BODY_SIZE` | `80m` | nginx 反代单请求体上限。**必须 ≥ 后端 `EXAM_SPLITTER_MAX_UPLOAD_MB`**,否则大文件会被反代提前砍掉,后端拿不到机会返回 413 |
 
 ## 前端
 
@@ -47,6 +56,16 @@ docker compose up -d --build
 ```
 
 容器内 `/data/uploads`、`/data/outputs` 通过 compose 挂载到宿主 `uploads/`、`outputs/`,便于排错与持久化。
+
+`compose.yaml` 里的环境变量都走 `${VAR:-默认值}` 形式,可以建一个 `.env` 文件覆盖,例如:
+
+```env
+EXAM_SPLITTER_MAX_UPLOAD_MB=128
+EXAM_SPLITTER_MAX_STORAGE_MB=5120
+CLIENT_MAX_BODY_SIZE=160m
+```
+
+> 调大 `MAX_UPLOAD_MB` 时记得同步把 `CLIENT_MAX_BODY_SIZE` 抬上去,且建议留 1.5× 余量(请求体含 multipart 头)。
 
 ## 常用命令速查
 

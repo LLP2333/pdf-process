@@ -2,7 +2,9 @@ server {
     listen 80;
     server_name _;
 
-    client_max_body_size 128m;
+    # 反代单请求体上限,由 compose 的 CLIENT_MAX_BODY_SIZE 环境变量注入。
+    # 应当 >= 后端 EXAM_SPLITTER_MAX_UPLOAD_MB,否则大文件会被反代提前砍掉。
+    client_max_body_size ${CLIENT_MAX_BODY_SIZE};
 
     root /usr/share/nginx/html;
     index index.html;

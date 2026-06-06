@@ -3,6 +3,16 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-06-06
+
+- **公网部署安全加固 + 资源配额(全部可在 compose 配置)**。
+  - **doc_id 严格白名单**(`^[a-f0-9]{16}$`):`page_image / preview / export` 三条带 `{doc_id}` 的路由开头统一调 `_require_doc()`,非法格式(`..`、URL 编码、长度异常等)和"不存在/过期"全部返回 404,不再泄露差异。
+  - **单文件上传上限**:新增 `EXAM_SPLITTER_MAX_UPLOAD_MB`(默认 64MB)。上传路由改为 1MB 流式写盘,超限立刻 413 并清掉半成品,避免攻击者刻意发超大流量塞满磁盘。
+  - **总存储软上限 + LRU 自动清理**:新增 `EXAM_SPLITTER_MAX_STORAGE_MB`(默认 2GB,`uploads + outputs` 合并计算)与 `EXAM_SPLITTER_PROTECT_SECONDS`(默认 5min 保护期)。`storage.maintenance()` 增强为两阶段:① 按 `RETENTION_SECONDS` 清过期;② 总占用超软上限时按 mtime 升序清"保护期外"的旧 doc,直到降至 80% 水位。upload 路由完成后做软上限兜底校验,清不下来就回滚并 507。
+  - **nginx 反代联动**:`frontend/nginx.conf` → `frontend/default.conf.template`,通过 `nginx:alpine` 镜像内置的 envsubst 把 compose 的 `CLIENT_MAX_BODY_SIZE`(默认 80m)注入 `client_max_body_size`,确保 nginx 不会先于后端把大文件砍掉。
+  - **compose.yaml** 全面改成 `${VAR:-默认值}` 形式,所有上述变量都可以通过 `.env` 覆盖。
+  - 新增 4 条后端测试:`test_invalid_doc_id_rejected_uniformly`、`test_upload_oversize_rejected`、`test_upload_triggers_lru_when_over_storage_cap`、`test_upload_lru_respects_protect_window`。
+
 ## 2026-06-05 (傍晚 2)
 
 - **修复 bug:跨页题用「底部再裁」碰到第一页页脚("第 1 页(共 2 页)")就拉不动**。

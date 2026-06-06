@@ -37,7 +37,7 @@
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── vite.config.ts
-│   ├── nginx.conf
+│   ├── default.conf.template     # nginx 模板,启动时由 envsubst 注入 CLIENT_MAX_BODY_SIZE
 │   └── Dockerfile
 ├── docs/                     # 本目录:开发文档
 ├── uploads/                  # 运行时上传(gitignore)
@@ -76,12 +76,13 @@
 2. **坐标系**:全程使用 PDF 原始坐标(单位 pt),前端只用 `pageHeight` 做一次像素↔pt 换算。后端从来不需要知道像素。
 3. **PDF 导出走矢量**:沿用 PyMuPDF 的 `show_pdf_page(target_rect, src_doc, page, clip=clip)`,公式 / 表格 / 图形 100% 保留原貌,一题一页,横版 A4,题区置顶居中。
 4. **自动去白边**:`auto_trim=true`(默认)时,对每段在 1x 灰度像素图上逐行扫描,找出首末非白行回算到 pt 坐标。同一开关同时作用于矢量 PDF 导出、PPTX 导出与预览,确保所见即所得。
-5. **二次裁剪 = 题目级别 top/bottom 微调**:在预览弹窗中,每题可对 segments 的"顶部/底部"再额外裁掉若干 pt。前端在调用 `/api/preview` 和 `/api/export` 之前先把这两个量应用到 segments(改第一段 y1、最后一段 y2),后端不感知该字段。Adjustment 以稳定的 question id(`${prevDivId}|${nextDivId}`)存放,分割线被删时孤儿 adjustment 会被自动清理。
+5. **二次裁剪 = 题目级别 `trim: {top, bottom}` 字段(后端在 `auto_trim` 之后单独应用,跨段级联)**:在预览弹窗中,每题可对"顶部/底部"再额外裁掉若干 pt。**前端不再 mutate segments 的 y 值,而是把 top/bottom 作为 `question.trim` 字段一起上传**;后端 `_normalize_segments` 先做完 `auto_trim` 像素扫描,**之后**再对第一/最后一段应用 trim,且当某端段被吃光时剩余量会**继续吃前/后相邻段**。这样可以避免"用户调的微调量 < 自动去白边量"时被吞掉,也能让跨页题用「底部再裁」从最后一段一路吃到第一页底部的页脚("第 1 页(共 2 页)")。Adjustment 以稳定的 question id(`${prevDivId}|${nextDivId}`)存放,分割线被删时孤儿 adjustment 会被自动清理。
 6. **PPTX 导出走栅格**:python-pptx 不支持直接嵌入 PDF;每段以 220 DPI 渲染为 PNG 再插入 16:9 幻灯片。讲解投影场景足够清晰,体积可控。
 7. **预览弹窗串行而非并行**:`PreviewModal` 用 200ms debounce + 串行调用 `/api/preview`,避免调滑块时把后端打趴;每次请求按 `fingerprint` 校验,过期响应丢弃。
-8. **无登录、无持久会话**:doc_id 即资源句柄,过期(默认 24h)自动清理,可通过 `EXAM_SPLITTER_RETENTION` 调整。
-9. **前后端解耦,Nginx 反代统一同源**:前端容器 80 暴露,`/api/*` 反代到后端 8000,浏览器只见同源,免 CORS 复杂度。本地开发用 Vite proxy 模拟。
-10. **错误返回中文**:所有用户可见错误都用 `HTTPException(detail="中文")`,前端 `api.ts` 统一抽取 `detail` 抛出。
+8. **无登录、无持久会话**:doc_id 即资源句柄,16 位小写 hex(`uuid4().hex[:16]`,64 bit 随机不可枚举),过期(默认 24h)自动清理,可通过 `EXAM_SPLITTER_RETENTION` 调整。
+9. **路径遍历防护 + 配额闸门**:所有 `{doc_id}` 路由开头走严格白名单 `^[a-f0-9]{16}$`,非法形式(含 `..`、URL 编码绕过等)统一 404 不区分原因。上传走流式写盘并按 `EXAM_SPLITTER_MAX_UPLOAD_MB`(默认 64MB)实时拒绝,`uploads + outputs` 总占用按 `EXAM_SPLITTER_MAX_STORAGE_MB`(默认 2GB)做软上限:超过时 `storage.maintenance()` 按 mtime 升序清掉**保护期(默认 5 分钟)以外**的旧 doc,清不下来才让本次上传 507,避免误删别人正在用的文档。
+10. **前后端解耦,Nginx 反代统一同源**:前端容器 80 暴露,`/api/*` 反代到后端 8000,浏览器只见同源,免 CORS 复杂度。本地开发用 Vite proxy 模拟。`client_max_body_size` 走 `default.conf.template` + 镜像内置 envsubst,通过 compose 的 `CLIENT_MAX_BODY_SIZE` 注入,与后端 `MAX_UPLOAD_MB` 保持联动。
+11. **错误返回中文**:所有用户可见错误都用 `HTTPException(detail="中文")`,前端 `api.ts` 统一抽取 `detail` 抛出。
 
 ## 后端模块职责
 
@@ -89,7 +90,7 @@
 | --- | --- |
 | `app.main` | FastAPI 应用、路由、错误兜底,**不写业务** |
 | `app.schemas` | Pydantic 请求/响应模型,**所有外部契约的唯一源** |
-| `app.storage` | `uploads/`、`outputs/` 路径约定 + `maintenance()` 过期清理 |
+| `app.storage` | `uploads/`、`outputs/` 路径约定 + 单文件/总容量上限 + `maintenance()`(过期清理 + 超容量 LRU,带保护窗) |
 | `app.pdf_service` | PDF 预览渲染 + 自动去白边 + 矢量裁剪输出 PDF + 拼接单题预览 PNG |
 | `app.ppt_service` | 把 PNG 段组装成 16:9 PPTX(依赖 `pdf_service.render_segments_to_png`) |
 

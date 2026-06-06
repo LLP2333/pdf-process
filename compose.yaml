@@ -5,6 +5,15 @@ services:
     container_name: exam-splitter-backend
     environment:
       - EXAM_SPLITTER_DATA_DIR=/data
+      # 单文件上传上限(MB),超出立即 413。默认 64MB
+      - EXAM_SPLITTER_MAX_UPLOAD_MB=${EXAM_SPLITTER_MAX_UPLOAD_MB:-64}
+      # uploads + outputs 总占用软上限(MB),超出按 LRU 自动清理保护期外的旧 doc;
+      # 清不下来时本次上传返回 507。默认 2048MB = 2GB
+      - EXAM_SPLITTER_MAX_STORAGE_MB=${EXAM_SPLITTER_MAX_STORAGE_MB:-2048}
+      # 单 doc 保留时长(秒),超期后由 maintenance() 清理。默认 86400 = 24 小时
+      - EXAM_SPLITTER_RETENTION=${EXAM_SPLITTER_RETENTION:-86400}
+      # LRU 清理保护期(秒):最近 N 秒动过的 doc 不会被强制清理,避免误伤正在用的。默认 300 = 5 分钟
+      - EXAM_SPLITTER_PROTECT_SECONDS=${EXAM_SPLITTER_PROTECT_SECONDS:-300}
     volumes:
       - ./uploads:/data/uploads
       - ./outputs:/data/outputs
@@ -18,6 +27,9 @@ services:
     container_name: exam-splitter-frontend
     depends_on:
       - backend
+    # nginx 层兜底单请求体大小,默认 80MB(>= EXAM_SPLITTER_MAX_UPLOAD_MB),让后端有机会返回 413 而非被反代提前砍掉
+    environment:
+      - CLIENT_MAX_BODY_SIZE=${CLIENT_MAX_BODY_SIZE:-80m}
     ports:
       - "8080:80"
     restart: unless-stopped
