@@ -20,6 +20,8 @@ services:
     expose:
       - "8000"
     restart: unless-stopped
+    networks:
+      - qvqw
 
   frontend:
     build: ./frontend
@@ -30,6 +32,15 @@ services:
     # nginx 层兜底单请求体大小,默认 80MB(>= EXAM_SPLITTER_MAX_UPLOAD_MB),让后端有机会返回 413 而非被反代提前砍掉
     environment:
       - CLIENT_MAX_BODY_SIZE=${CLIENT_MAX_BODY_SIZE:-80m}
-    ports:
-      - "8080:80"
+    expose:
+      - "80"
     restart: unless-stopped
+    networks:
+      - qvqw
+
+# 外部反向代理(nginx-proxy / Caddy / traefik 等)也需要加入这个网络,
+# 才能用 `http://exam-splitter-frontend:80` 解析到本服务。
+# 创建该网络一次即可:`docker network create qvqw`(如果还没有的话)。
+networks:
+  qvqw:
+    external: true

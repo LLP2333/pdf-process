@@ -3,6 +3,14 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-06-06 (后)
+
+- **部署形态:接入外部反代专用网络 `qvqw`**。
+  - `backend` 与 `frontend` 两个 service 都加 `networks: [qvqw]`,顶层声明 `networks.qvqw.external: true`。
+  - 删除 `frontend.ports: 8080:80`(不再向宿主暴露),只保留 `expose: "80"`;由外层反代(nginx-proxy / Caddy / traefik)通过 `http://exam-splitter-frontend:80` 接管对外。
+  - 外层反代容器也需要加入 `qvqw` 才能 DNS 解析到 frontend;`client_max_body_size` 必须与后端 `MAX_UPLOAD_MB` 联动。
+  - 首次启动需 `docker network create qvqw`,文档已补到 `docs/development.md`。
+
 ## 2026-06-06
 
 - **公网部署安全加固 + 资源配额(全部可在 compose 配置)**。
