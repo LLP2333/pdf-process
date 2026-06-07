@@ -104,7 +104,7 @@
 | `UploadPanel` | 上传交互,无业务状态 |
 | `PdfPage` | 单页 PDF + Konva Stage 叠加:单击新建 / 拖动调整 / Shift单击+× 删除分割线 |
 | `QuestionList` | 左栏:派生题目列表(跨页提示 + 二次裁剪角标)+ 跳转 + 清空分割线 |
-| `ExportPanel` | 左栏顶部:自动去白边 + 页边距 + 「预览裁剪效果」按钮 |
+| `ExportPanel` | 左栏顶部:自动去白边 + 页边距 + 「预览裁剪效果」按钮 + 折叠左栏按钮 |
 | `PreviewModal` | 弹窗:逐题预览 + 顶部/底部再裁剪滑块 + 「确认并导出 PDF/PPTX」 |
 
 ## 扩展点

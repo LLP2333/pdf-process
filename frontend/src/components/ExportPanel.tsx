@@ -6,6 +6,8 @@ interface Props {
   onMarginChange: (value: number) => void;
   /** 打开「预览 + 二次裁剪」弹窗;真正的导出在弹窗里完成。 */
   onOpenPreview: () => void;
+  /** 折叠左侧栏:平板等窄屏下把参数面板收起,给 PDF 预览区让出空间。 */
+  onCollapse: () => void;
 }
 
 /**
@@ -21,11 +23,22 @@ export default function ExportPanel({
   margin,
   onMarginChange,
   onOpenPreview,
+  onCollapse,
 }: Props) {
   const disabled = questionCount === 0;
   return (
     <div className="export">
-      <div className="export-head">导出参数</div>
+      <div className="export-head">
+        <span>导出参数</span>
+        <button
+          className="side-collapse-btn"
+          onClick={onCollapse}
+          title="折叠面板"
+          aria-label="折叠导出参数与题目面板"
+        >
+          ‹
+        </button>
+      </div>
       <label className="export-row">
         <input
           type="checkbox"

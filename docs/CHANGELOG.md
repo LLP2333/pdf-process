@@ -5,6 +5,7 @@
 
 ## 2026-06-07
 
+- **左侧栏支持折叠 + 宽度适配平板**:`App` 新增 `sideCollapsed` 状态;`ExportPanel` 标题栏加折叠按钮,折叠后左栏收成 `--rail-w`(40px)细条、整条即「展开」按钮(竖排标签)。`.workspace` 侧栏宽度改用 `--side-w` 变量,在 1024 / 820 / 640px 断点逐级收窄,适配平板横竖屏。
 - **导出文件名带上原始文件名**:`POST /api/export` 新增可选入参 `source_name`,后端据此拼出下载名 `<原名>_切割重组.<ext>`(清洗路径/非法字符,空则回退 `试卷切割重组.<ext>`);前端 `exportFile` 透传 `doc.filename` 并同步兜底逻辑。
 - **新增网站标签页图标**:`frontend/public/favicon.svg`(品牌渐变 + 剪刀),`index.html` 引用 `/favicon.svg`。
 

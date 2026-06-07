@@ -9,6 +9,7 @@ function renderPanel(opts?: {
   margin?: number;
   onMargin?: (v: number) => void;
   onOpenPreview?: () => void;
+  onCollapse?: () => void;
 }) {
   return render(
     <ExportPanel
@@ -18,6 +19,7 @@ function renderPanel(opts?: {
       margin={opts?.margin ?? 28}
       onMarginChange={opts?.onMargin ?? (() => {})}
       onOpenPreview={opts?.onOpenPreview ?? (() => {})}
+      onCollapse={opts?.onCollapse ?? (() => {})}
     />,
   );
 }
@@ -45,6 +47,13 @@ describe("ExportPanel", () => {
     expect(cb.checked).toBe(true);
     fireEvent.click(cb);
     expect(onAutoTrim).toHaveBeenCalledWith(false);
+  });
+
+  it("点击折叠按钮会触发 onCollapse", () => {
+    const onCollapse = vi.fn();
+    renderPanel({ onCollapse });
+    fireEvent.click(screen.getByLabelText(/折叠导出参数与题目面板/));
+    expect(onCollapse).toHaveBeenCalledTimes(1);
   });
 
   it("修改页边距会触发 onMarginChange,数值被夹到 0-120", () => {

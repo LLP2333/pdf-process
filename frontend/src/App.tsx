@@ -17,6 +17,7 @@ export default function App() {
   const [adjustments, setAdjustments] = useState<Record<string, Adjustment>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState<number | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const derivedQuestions = useMemo(
@@ -182,24 +183,41 @@ export default function App() {
           <UploadPanel onUploaded={onUploaded} />
         </main>
       ) : (
-        <main className="workspace">
-          <aside className="side side-left">
-            <ExportPanel
-              questionCount={derivedQuestions.length}
-              autoTrim={autoTrim}
-              onAutoTrimChange={setAutoTrim}
-              margin={margin}
-              onMarginChange={setMargin}
-              onOpenPreview={() => setShowPreview(true)}
-            />
-            <QuestionList
-              questions={derivedQuestions}
-              activeQuestionIndex={activeQuestionIndex}
-              onSelectQuestion={handleSelectQuestion}
-              onClearDividers={clearDividers}
-              dividerCount={dividers.length}
-              adjustments={adjustments}
-            />
+        <main className={"workspace" + (sideCollapsed ? " side-collapsed" : "")}>
+          <aside className={"side side-left" + (sideCollapsed ? " collapsed" : "")}>
+            {sideCollapsed ? (
+              <button
+                className="side-expand"
+                onClick={() => setSideCollapsed(false)}
+                title="展开导出参数 / 题目面板"
+                aria-label="展开导出参数与题目面板"
+              >
+                <span className="side-expand-icon" aria-hidden="true">
+                  ›
+                </span>
+                <span className="side-expand-text">导出参数 / 题目</span>
+              </button>
+            ) : (
+              <>
+                <ExportPanel
+                  questionCount={derivedQuestions.length}
+                  autoTrim={autoTrim}
+                  onAutoTrimChange={setAutoTrim}
+                  margin={margin}
+                  onMarginChange={setMargin}
+                  onOpenPreview={() => setShowPreview(true)}
+                  onCollapse={() => setSideCollapsed(true)}
+                />
+                <QuestionList
+                  questions={derivedQuestions}
+                  activeQuestionIndex={activeQuestionIndex}
+                  onSelectQuestion={handleSelectQuestion}
+                  onClearDividers={clearDividers}
+                  dividerCount={dividers.length}
+                  adjustments={adjustments}
+                />
+              </>
+            )}
           </aside>
           <section className="pages">{pageView}</section>
         </main>

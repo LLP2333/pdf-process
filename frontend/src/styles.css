@@ -96,11 +96,16 @@ body {
 .err { margin-top: 12px; color: var(--err); font-size: 13px; }
 
 /* ---- 工作区:两列(左:导出+题目列表 / 右:PDF 区) ---- */
+/* 侧栏宽度交给 --side-w,随屏幕在各断点收窄;折叠时换成 --rail-w 的细条。 */
 .workspace {
   flex: 1 1 0;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: var(--side-w, 320px) minmax(0, 1fr);
   min-height: 0;
+  --rail-w: 40px;
+}
+.workspace.side-collapsed {
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
 }
 
 .side {
@@ -111,6 +116,43 @@ body {
   overflow: hidden;
 }
 .side-left { border-right: 1px solid var(--line); }
+.side-left.collapsed { background: #fafafa; }
+
+/* 折叠后的细条:整条都是「展开」按钮,竖排标签提示里面是什么 */
+.side-expand {
+  flex: 1 1 0;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  color: var(--muted);
+}
+.side-expand:hover { background: #f1f5f9; color: var(--brand); }
+.side-expand-icon { font-size: 18px; font-weight: 700; line-height: 1; }
+.side-expand-text {
+  writing-mode: vertical-rl;
+  letter-spacing: 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* 折叠按钮(在导出参数标题栏右侧) */
+.side-collapse-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 0 4px;
+  border-radius: 6px;
+}
+.side-collapse-btn:hover { background: #eef2ff; color: var(--brand); }
 
 /* ---- 导出参数面板(置顶) ---- */
 .export {
@@ -122,6 +164,10 @@ body {
 .export-head {
   font-weight: 700;
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .export-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -348,7 +394,17 @@ body {
   display: flex; gap: 10px; justify-content: flex-end;
 }
 
-/* 窄屏:把侧栏稍微收窄 */
-@media (max-width: 860px) {
-  .workspace { grid-template-columns: 260px minmax(0, 1fr); }
+/* 平板/窄屏:侧栏随屏幕逐级收窄(折叠态始终是 --rail-w 的细条,不受影响) */
+/* 平板横屏 (~1024px) */
+@media (max-width: 1024px) {
+  .workspace { --side-w: 288px; }
+}
+/* 平板竖屏 (~820px) */
+@media (max-width: 820px) {
+  .workspace { --side-w: 248px; }
+}
+/* 小平板 / 大手机 (~640px) */
+@media (max-width: 640px) {
+  .workspace { --side-w: 210px; }
+  .pages { padding: 12px 12px 48px; }
 }
