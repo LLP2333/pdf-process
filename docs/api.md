@@ -141,6 +141,7 @@ curl http://localhost:8000/api/health
   "format": "pdf",
   "margin": 28,
   "auto_trim": true,
+  "source_name": "2024期末数学.pdf",
   "questions": [
     { "no": 1, "segments": [{ "page": 0, "y1": 120, "y2": 300 }] },
     { "no": 2,
@@ -154,10 +155,12 @@ curl http://localhost:8000/api/health
 }
 ```
 
+- `source_name`(可选):上传时的原始文件名,可带 `.pdf` 扩展名。后端会取其主干拼出下载名 `<原名>_切割重组.<ext>`;未传或清洗后为空时回退到固定名 `试卷切割重组.<ext>`。
+
 **成功 200**:
 
 - `Content-Type`:`application/pdf` 或 `application/vnd.openxmlformats-officedocument.presentationml.presentation`
-- `Content-Disposition`:`attachment; filename*=UTF-8''试卷切割重组.<ext>`
+- `Content-Disposition`:`attachment; filename*=UTF-8''<原名>_切割重组.<ext>`(未传 `source_name` 时为 `试卷切割重组.<ext>`)
 - `X-Question-Count`:实际生成的题目数(字符串)
 
 **失败**:
