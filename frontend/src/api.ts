@@ -38,6 +38,8 @@ export interface ExportRequest {
   format: ExportFormat;
   margin: number;
   auto_trim: boolean;
+  /** 上传时的原始文件名,后端据此拼出下载名 `<原名>_切割重组.<ext>`。 */
+  source_name?: string;
   questions: Question[];
 }
 
@@ -66,6 +68,13 @@ export async function uploadPdf(file: File): Promise<UploadResponse> {
   return resp.json();
 }
 
+/**
+ * 调用 `POST /api/export/{docId}` 导出 PDF / PPTX。
+ *
+ * 下载名优先取响应头 `Content-Disposition`(后端按 `<原名>_切割重组.<ext>` 给出);
+ * 若响应头缺失,则在前端按 `payload.source_name` 兜底拼一个同样规则的名字,
+ * 实在没有原名时退回固定名 `试卷切割重组.<ext>`。
+ */
 export async function exportFile(
   docId: string,
   payload: ExportRequest
@@ -82,13 +91,18 @@ export async function exportFile(
   const cd = resp.headers.get("Content-Disposition") || "";
   const count = Number(resp.headers.get("X-Question-Count") || "0");
   const m = cd.match(/filename\*=UTF-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
-  const filename = m
-    ? decodeURIComponent(m[1])
-    : payload.format === "pdf"
-      ? "试卷切割重组.pdf"
-      : "试卷切割重组.pptx";
+  const filename = m ? decodeURIComponent(m[1]) : fallbackName(payload);
   const blob = await resp.blob();
   return { blob, filename, count };
+}
+
+/** Content-Disposition 缺失时的兜底下载名,规则与后端 `_download_name` 保持一致。 */
+function fallbackName(payload: ExportRequest): string {
+  const ext = payload.format === "pdf" ? "pdf" : "pptx";
+  let stem = (payload.source_name ?? "").replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+  if (stem.toLowerCase().endsWith(".pdf")) stem = stem.slice(0, -4);
+  stem = stem.replace(/[\\/:*?"<>|\x00-\x1f]/g, "").trim();
+  return stem ? `${stem}_切割重组.${ext}` : `试卷切割重组.${ext}`;
 }
 
 /**

@@ -19,6 +19,7 @@ function renderModal(opts?: {
     <PreviewModal
       open={opts?.open ?? true}
       docId="abc"
+      sourceName="期中卷.pdf"
       derivedQuestions={opts?.questions ?? Q}
       autoTrim={true}
       margin={28}
@@ -162,5 +163,7 @@ describe("PreviewModal", () => {
     expect(body.questions[1].trim).toBeUndefined();
     expect(body.auto_trim).toBe(true);
     expect(body.margin).toBe(28);
+    // 原始文件名随导出请求带上,供后端拼下载名
+    expect(body.source_name).toBe("期中卷.pdf");
   });
 });

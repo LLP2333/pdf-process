@@ -75,6 +75,21 @@ describe("api.ts", () => {
     expect(r.filename).toBe("试卷切割重组.pptx");
   });
 
+  it("exportFile 无文件名头但有 source_name 时按 <原名>_切割重组 兜底", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("xx", { status: 200 }))
+    );
+    const r = await exportFile("d", {
+      format: "pdf",
+      margin: 28,
+      auto_trim: true,
+      source_name: "2024期末数学.pdf",
+      questions: [{ no: 1, segments: [{ page: 0, y1: 0, y2: 10 }] }],
+    });
+    expect(r.filename).toBe("2024期末数学_切割重组.pdf");
+  });
+
   it("exportFile 失败时抛出错误", async () => {
     vi.stubGlobal(
       "fetch",

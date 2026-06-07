@@ -66,6 +66,13 @@ class ExportRequest(BaseModel):
         True,
         description="是否自动去除题目内容上下的白边(默认开启)。开启时会以原 clip 范围做像素扫描,把首末非白行回算到 pt 坐标。",
     )
+    source_name: str | None = Field(
+        default=None,
+        description=(
+            "上传时的原始文件名(可含 .pdf 扩展名)。后端据此拼出下载名 `<原名>_切割重组.<ext>`;"
+            "未传或为空时回退到固定名 `试卷切割重组.<ext>`。"
+        ),
+    )
     questions: list[Question] = Field(..., min_length=1)
 
 

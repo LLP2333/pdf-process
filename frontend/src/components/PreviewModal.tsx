@@ -6,6 +6,8 @@ import type { Adjustment, DerivedQuestion } from "../types";
 interface Props {
   open: boolean;
   docId: string;
+  /** 上传时的原始文件名,用于把导出文件命名为 `<原名>_切割重组.<ext>`。 */
+  sourceName: string;
   derivedQuestions: DerivedQuestion[];
   autoTrim: boolean;
   margin: number;
@@ -35,6 +37,7 @@ const DEBOUNCE_MS = 200;
 export default function PreviewModal({
   open,
   docId,
+  sourceName,
   derivedQuestions,
   autoTrim,
   margin,
@@ -164,6 +167,7 @@ export default function PreviewModal({
         format,
         margin,
         auto_trim: autoTrim,
+        source_name: sourceName,
         questions: payloadQuestions,
       });
       const url = URL.createObjectURL(blob);

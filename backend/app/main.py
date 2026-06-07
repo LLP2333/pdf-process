@@ -158,6 +158,29 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
     )
 
 
+# 文件名里对各操作系统 / HTTP 头有害的字符,导出前一律剔除,避免下载报错或路径遍历。
+_BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _download_name(source_name: str | None, ext: str) -> str:
+    """根据上传时的原始文件名拼出下载名:`<去扩展名的原名>_切割重组.<ext>`。
+
+    - 只取路径最后一段并去掉 `.pdf` 扩展名,挡掉 `../` 与 Windows 反斜杠路径;
+    - 剔除对文件名/响应头有害的字符;
+    - 主干为空(未传 source_name 或清洗后啥都不剩)时回退到固定名 `试卷切割重组.<ext>`,
+      保证下载到的文件始终有个可读的名字。
+    """
+    stem = ""
+    if source_name:
+        base = source_name.replace("\\", "/").split("/")[-1].strip()
+        if base[-4:].lower() == ".pdf":
+            base = base[:-4]
+        stem = _BAD_NAME_CHARS.sub("", base).strip()
+    if not stem:
+        return f"试卷切割重组.{ext}"
+    return f"{stem}_切割重组.{ext}"
+
+
 def _require_doc(doc_id: str) -> Path:
     """统一的 doc_id 安全闸:格式不合法 / 源文件不存在 → 统一 404。
 
@@ -261,7 +284,7 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"导出 PDF 失败:{exc}") from exc
         media = "application/pdf"
-        download = "试卷切割重组.pdf"
+        download = _download_name(payload.source_name, "pdf")
     else:
         out_path = storage.export_path(doc_id, "pptx")
         try:
@@ -271,7 +294,7 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"导出 PPTX 失败:{exc}") from exc
         media = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        download = "试卷切割重组.pptx"
+        download = _download_name(payload.source_name, "pptx")
 
     if made == 0:
         raise HTTPException(status_code=422, detail="没有可导出的题目,请检查切分区域")

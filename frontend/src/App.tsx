@@ -209,6 +209,7 @@ export default function App() {
         <PreviewModal
           open={showPreview}
           docId={doc.docId}
+          sourceName={doc.filename}
           derivedQuestions={derivedQuestions}
           autoTrim={autoTrim}
           margin={margin}

@@ -2,8 +2,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
+
+
+def _disposition_filename(resp) -> str:
+    """从 RFC 5987 的 `Content-Disposition` 头里解出真实下载文件名。"""
+    cd = resp.headers["content-disposition"]
+    marker = "filename*=UTF-8''"
+    assert marker in cd
+    return unquote(cd.split(marker, 1)[1].split(";")[0])
 
 
 def test_health(client: TestClient) -> None:
@@ -110,6 +119,49 @@ def test_export_all_invalid_segments_returns_422(client: TestClient, sample_pdf:
     }
     resp = client.post(f"/api/export/{doc_id}", json=payload)
     assert resp.status_code == 422
+
+
+def test_export_uses_original_filename(client: TestClient, sample_pdf: Path) -> None:
+    """正例:传了 source_name 时,下载名应为 `<去扩展名原名>_切割重组.<ext>`。"""
+    with sample_pdf.open("rb") as fh:
+        resp = client.post(
+            "/api/upload",
+            files={"file": (sample_pdf.name, fh.read(), "application/pdf")},
+        )
+    doc_id = resp.json()["doc_id"]
+
+    payload = {
+        "format": "pdf",
+        "margin": 28,
+        "source_name": "2024期末数学.pdf",
+        "questions": [{"no": 1, "segments": [{"page": 0, "y1": 120, "y2": 300}]}],
+    }
+    resp = client.post(f"/api/export/{doc_id}", json=payload)
+    assert resp.status_code == 200
+    assert _disposition_filename(resp) == "2024期末数学_切割重组.pdf"
+
+
+def test_export_without_source_name_falls_back(client: TestClient, sample_pdf: Path) -> None:
+    """反例:未传 source_name(或被清洗为空)时,回退到固定名 `试卷切割重组.<ext>`。"""
+    with sample_pdf.open("rb") as fh:
+        resp = client.post(
+            "/api/upload",
+            files={"file": (sample_pdf.name, fh.read(), "application/pdf")},
+        )
+    doc_id = resp.json()["doc_id"]
+
+    # 既测「完全不传」,也测「带路径遍历的非法名被清洗成空」两种回退路径
+    for src in (None, "../../"):
+        payload = {
+            "format": "pptx",
+            "margin": 28,
+            "questions": [{"no": 1, "segments": [{"page": 0, "y1": 120, "y2": 300}]}],
+        }
+        if src is not None:
+            payload["source_name"] = src
+        resp = client.post(f"/api/export/{doc_id}", json=payload)
+        assert resp.status_code == 200
+        assert _disposition_filename(resp) == "试卷切割重组.pptx"
 
 
 def test_preview_returns_png(client: TestClient, sample_pdf: Path) -> None:
