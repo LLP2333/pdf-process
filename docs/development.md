@@ -108,11 +108,59 @@ server {
 
 不要把这行作为生产形态保留——它会同时把服务暴露给宿主所有网卡。
 
+## Windows 桌面客户端(单文件 exe)
+
+给非技术用户的免安装形态:把后端 + 前端打进一个 `ExamSplitter.exe`,双击即弹出一个小窗口(打开网页 / 打开数据目录 / 停止并退出),用户依旧在本地浏览器使用,无需 Docker / Node / Python。
+
+相关文件都在 `desktop/`:
+
+| 文件 | 作用 |
+| --- | --- |
+| `desktop/launcher.py` | 启动器:后台线程跑 uvicorn,挂载前端 `dist/`,主线程开 Tk 启停窗口 |
+| `desktop/exam_splitter.spec` | PyInstaller 单文件打包配置(onefile,`collect_all` 收齐动态依赖) |
+| `desktop/requirements.txt` | 打包依赖 = 后端运行时依赖 + `pyinstaller` |
+
+### 自动构建(推荐):GitHub Actions
+
+工作流 `.github/workflows/build-windows.yml` 在 `windows-latest` 上自动出包:
+
+- **手动触发**:Actions 页面选「Build Windows Client」→ Run workflow,产物在该次运行的 Artifacts(`ExamSplitter-windows`)里下载。
+- **打 tag 触发**:推送形如 `v1.0.0` 的 tag,会额外把 `ExamSplitter.exe` 附到对应 Release。
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### 本地构建(需在 Windows 上)
+
+PyInstaller 不支持跨平台交叉编译,Windows exe 必须在 Windows 机器(或上面的 CI)上构建:
+
+```powershell
+# 1) 先产出前端静态资源
+cd frontend
+npm ci
+npm run build
+cd ..
+
+# 2) 装打包依赖并打包(在仓库根执行)
+python -m venv .venv-build
+.\.venv-build\Scripts\Activate.ps1
+pip install -r desktop/requirements.txt
+pyinstaller --noconfirm --clean desktop/exam_splitter.spec
+
+# 产物:dist\ExamSplitter.exe
+```
+
+> 运行期数据(uploads / outputs / 日志 `exam_splitter.log`)写到 `%LOCALAPPDATA%\ExamSplitter`;排查启动问题先看这个日志。
+> 想在 macOS / Linux 上验证启动器逻辑(不打包):`python desktop/launcher.py`,它会用源码里的 `frontend/dist` 与仓库根作为数据目录。
+
 ## 常用命令速查
 
 | 目标 | 命令 |
 | --- | --- |
 | 后端测试 | `cd backend && .venv/bin/pytest` |
+| 打包 Windows exe(在 Windows 上) | `pyinstaller --noconfirm --clean desktop/exam_splitter.spec` |
 | 后端 lint(若引入 ruff) | `ruff check app tests` |
 | 前端构建 | `cd frontend && npm run build` |
 | 前端测试 | `cd frontend && npm test` |

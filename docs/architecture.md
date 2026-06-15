@@ -39,9 +39,15 @@
 │   ├── vite.config.ts
 │   ├── default.conf.template     # nginx 模板,启动时由 envsubst 注入 CLIENT_MAX_BODY_SIZE
 │   └── Dockerfile
+├── desktop/                  # Windows 桌面客户端打包
+│   ├── launcher.py           # 启动器:uvicorn 后台线程 + 前端静态挂载 + Tk 启停窗口
+│   ├── exam_splitter.spec    # PyInstaller 单文件打包配置
+│   └── requirements.txt      # 打包依赖(后端运行时 + pyinstaller)
 ├── docs/                     # 本目录:开发文档
 ├── uploads/                  # 运行时上传(gitignore)
 ├── outputs/                  # 运行时预览 PNG + 导出产物(gitignore)
+├── .github/workflows/
+│   └── build-windows.yml     # CI:windows-latest 构建并发布 ExamSplitter.exe
 ├── compose.yaml
 └── README.md
 ```
@@ -83,6 +89,7 @@
 9. **路径遍历防护 + 配额闸门**:所有 `{doc_id}` 路由开头走严格白名单 `^[a-f0-9]{16}$`,非法形式(含 `..`、URL 编码绕过等)统一 404 不区分原因。上传走流式写盘并按 `EXAM_SPLITTER_MAX_UPLOAD_MB`(默认 64MB)实时拒绝,`uploads + outputs` 总占用按 `EXAM_SPLITTER_MAX_STORAGE_MB`(默认 2GB)做软上限:超过时 `storage.maintenance()` 按 mtime 升序清掉**保护期(默认 5 分钟)以外**的旧 doc,清不下来才让本次上传 507,避免误删别人正在用的文档。
 10. **前后端解耦,Nginx 反代统一同源**:前端容器 80 暴露,`/api/*` 反代到后端 8000,浏览器只见同源,免 CORS 复杂度。本地开发用 Vite proxy 模拟。`client_max_body_size` 走 `default.conf.template` + 镜像内置 envsubst,通过 compose 的 `CLIENT_MAX_BODY_SIZE` 注入,与后端 `MAX_UPLOAD_MB` 保持联动。
 11. **错误返回中文**:所有用户可见错误都用 `HTTPException(detail="中文")`,前端 `api.ts` 统一抽取 `detail` 抛出。
+12. **Windows 桌面客户端 = 同源单进程 exe**:`desktop/launcher.py` 把后端 `app` 与前端 `dist/` 跑在同一个 uvicorn 进程、同一端口(默认 8000,被占用则取系统空闲端口),用 `StaticFiles(html=True)` 挂到根路由 `/`。因为前端 `api.ts` 调的是相对路径 `/api/*`,同源后无需 nginx 反代即可直连。uvicorn 跑在后台线程(`install_signal_handlers` 被置空,子线程不注册信号),主线程用标准库 Tkinter 提供「打开网页 / 停止并退出」的启停界面,用户体验仍是"本地网页"。数据目录落 `%LOCALAPPDATA%\ExamSplitter`(规避 Program Files 无写权限),且必须在 `import app.main` 之前设好 `EXAM_SPLITTER_DATA_DIR`(`storage.py` 在导入时即读取)。打包由 PyInstaller(`exam_splitter.spec`,onefile + `collect_all` 收齐 uvicorn/pymupdf/pptx 等动态依赖)完成,CI 在 `windows-latest` 上先 `npm run build` 再 `pyinstaller`。
 
 ## 后端模块职责
 

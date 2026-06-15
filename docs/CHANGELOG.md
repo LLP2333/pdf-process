@@ -3,6 +3,10 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-06-15
+
+- **新增 Windows 桌面客户端 + CI 自动出包**:`desktop/launcher.py` 把后端 uvicorn(后台线程)与前端 `dist/` 同源挂在一个进程/端口,主线程用 Tkinter 提供「打开网页 / 打开数据目录 / 停止并退出」启停窗口,用户仍走本地浏览器;`desktop/exam_splitter.spec`(PyInstaller onefile + `collect_all`)+ `desktop/requirements.txt` 负责打包;新增 `.github/workflows/build-windows.yml`,在 `windows-latest` 上 `npm run build` → `pyinstaller` 产出 `ExamSplitter.exe`,手动触发上传 Artifact、打 `v*` tag 时附到 Release。数据目录落 `%LOCALAPPDATA%\ExamSplitter`。文档同步 `docs/architecture.md`、`docs/development.md`。
+
 ## 2026-06-07
 
 - **左侧栏支持折叠 + 宽度适配平板**:`App` 新增 `sideCollapsed` 状态;`ExportPanel` 标题栏加折叠按钮,折叠后左栏收成 `--rail-w`(40px)细条、整条即「展开」按钮(竖排标签)。`.workspace` 侧栏宽度改用 `--side-w` 变量,在 1024 / 820 / 640px 断点逐级收窄,适配平板横竖屏。

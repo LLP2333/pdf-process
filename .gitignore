@@ -14,6 +14,10 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# PyInstaller(Windows 客户端打包产物)
+/build/
+desktop/build/
+
 # 工程运行时产物
 uploads/*
 !uploads/.gitkeep

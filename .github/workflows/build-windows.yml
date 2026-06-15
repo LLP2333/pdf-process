@@ -1,0 +1,66 @@
+name: Build Windows Client
+
+# 触发方式:
+# - 手动(Actions 页面 Run workflow);
+# - 推送形如 v1.0.0 的 tag 时,额外把 exe 作为附件发到对应 Release。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# 打 tag 时需要写 Release,故授予 contents: write。
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1) 构建前端静态资源(产出 frontend/dist,供 PyInstaller 打包进 exe)。
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # 2) 安装后端运行时依赖 + PyInstaller。
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r desktop/requirements.txt
+
+      # 3) 打包成单文件 exe -> dist/ExamSplitter.exe
+      - name: Build exe
+        run: pyinstaller --noconfirm --clean desktop/exam_splitter.spec
+
+      # 4) 始终上传构建产物,方便手动触发时直接下载。
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExamSplitter-windows
+          path: dist/ExamSplitter.exe
+          if-no-files-found: error
+
+      # 5) 仅在打 tag 时,把 exe 附到 Release。
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ExamSplitter.exe
