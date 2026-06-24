@@ -4,6 +4,7 @@ import PdfPage from "./components/PdfPage";
 import QuestionList from "./components/QuestionList";
 import ExportPanel from "./components/ExportPanel";
 import PreviewModal from "./components/PreviewModal";
+import { autoDetect } from "./api";
 import { buildQuestionsFromDividers, newDividerId } from "./dividers";
 import type { Adjustment, AppDoc, Divider } from "./types";
 
@@ -18,6 +19,11 @@ export default function App() {
   const [activeQuestionIndex, setActiveQuestionIndex] = useState<number | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
+  const [autoDetecting, setAutoDetecting] = useState(false);
+  const [autoDetectMessage, setAutoDetectMessage] = useState<{
+    text: string;
+    tone: "info" | "warn" | "error";
+  } | null>(null);
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const derivedQuestions = useMemo(
@@ -31,6 +37,7 @@ export default function App() {
     setAdjustments({});
     setActiveQuestionIndex(null);
     setShowPreview(false);
+    setAutoDetectMessage(null);
   }, []);
 
   const onUploaded = useCallback((d: AppDoc) => {
@@ -38,6 +45,7 @@ export default function App() {
     setDividers([]);
     setAdjustments({});
     setActiveQuestionIndex(null);
+    setAutoDetectMessage(null);
   }, []);
 
   const addDivider = useCallback(
@@ -80,6 +88,45 @@ export default function App() {
     setAdjustments({});
     setActiveQuestionIndex(null);
   }, []);
+
+  /**
+   * 调后端 `/api/auto_detect/{docId}` 自动识别题号并替换当前分割线。
+   *
+   * 三类结果都通过 `autoDetectMessage` 在 ExportPanel 顶部用一行文案告知用户:
+   * - 扫描件 / 无可识别题号:保留用户已有的手动分割线,只展示提示;
+   * - 识别到题号:替换 dividers + 清空 adjustments,然后展示"已识别 N 题"。
+   */
+  const handleAutoDetect = useCallback(async () => {
+    if (!doc) return;
+    setAutoDetecting(true);
+    setAutoDetectMessage(null);
+    try {
+      const result = await autoDetect(doc.docId);
+      if (!result.is_text) {
+        setAutoDetectMessage({ text: result.message, tone: "error" });
+        return;
+      }
+      if (result.dividers.length === 0) {
+        setAutoDetectMessage({ text: result.message, tone: "warn" });
+        return;
+      }
+      // 替换为草稿分割线;旧分割线相关的 adjustments 一并失效
+      const next: Divider[] = result.dividers.map((d) => ({
+        id: newDividerId(),
+        page: d.page,
+        y: d.y,
+      }));
+      setDividers(next);
+      setAdjustments({});
+      setActiveQuestionIndex(null);
+      setAutoDetectMessage({ text: result.message, tone: "info" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "自动识别失败";
+      setAutoDetectMessage({ text: msg, tone: "error" });
+    } finally {
+      setAutoDetecting(false);
+    }
+  }, [doc]);
 
   const handleSelectQuestion = useCallback(
     (qi: number) => {
@@ -207,6 +254,9 @@ export default function App() {
                   onMarginChange={setMargin}
                   onOpenPreview={() => setShowPreview(true)}
                   onCollapse={() => setSideCollapsed(true)}
+                  onAutoDetect={handleAutoDetect}
+                  autoDetecting={autoDetecting}
+                  autoDetectMessage={autoDetectMessage}
                 />
                 <QuestionList
                   questions={derivedQuestions}

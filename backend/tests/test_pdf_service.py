@@ -256,3 +256,106 @@ def test_trim_eats_everything_returns_empty(sample_pdf: Path) -> None:
     finally:
         doc.close()
     assert segs == []
+
+
+# ---------------------------------------------------------------------------
+# 自动识别:文字版 / 扫描件判定 + 题号识别
+# ---------------------------------------------------------------------------
+
+
+def _make_text_pdf_with_questions(path: Path, page_count: int = 2, per_page: int = 4) -> int:
+    """在 `path` 写一份文字版试卷,每页 `per_page` 道题(题号格式 `n. xxx`)。返回总题数。"""
+    doc = fitz.open()
+    no = 1
+    for _ in range(page_count):
+        page = doc.new_page(width=595, height=842)
+        # 模拟页眉(右栏 → 不会被识别为题号),验证"非左栏过滤"
+        page.insert_text((480, 50), "Page 1 of 2", fontsize=10)
+        for i in range(per_page):
+            y = 100 + i * 160
+            page.insert_text((72, y), f"{no}. body of question", fontsize=12)
+            no += 1
+    doc.save(path.as_posix())
+    doc.close()
+    return no - 1
+
+
+def test_detect_text_layer_recognizes_text_pdf(sample_pdf: Path) -> None:
+    """sample_pdf 每页有几十字符 → 应判定为文字版。"""
+    is_text, char_count, page_count = pdf_service.detect_text_layer(sample_pdf)
+    assert is_text is True
+    assert page_count == 2
+    assert char_count >= 2 * pdf_service.TEXT_LAYER_MIN_CHARS_PER_PAGE
+
+
+def test_detect_text_layer_recognizes_scan_pdf(scan_pdf: Path) -> None:
+    """扫描件(无文字层)应被判定为非文字版。"""
+    is_text, char_count, page_count = pdf_service.detect_text_layer(scan_pdf)
+    assert is_text is False
+    assert page_count == 2
+    # 极少量空白也算 0(detect_text_layer 已过滤)
+    assert char_count < pdf_service.TEXT_LAYER_MIN_CHARS_PER_PAGE * page_count
+
+
+def test_auto_detect_dividers_returns_n_plus_one_for_n_questions(tmp_path: Path) -> None:
+    """N 道题应当得到 N+1 条分割线(N 条题首 + 1 条末题底界)。"""
+    pdf_path = tmp_path / "exam.pdf"
+    total = _make_text_pdf_with_questions(pdf_path, page_count=2, per_page=4)
+    assert total == 8
+
+    dividers = pdf_service.auto_detect_dividers(pdf_path)
+    assert len(dividers) == total + 1
+
+    # 按 (page, y) 升序
+    keys = [(d.page, d.y) for d in dividers]
+    assert keys == sorted(keys)
+    # 末条放在最后一页底部附近
+    last = dividers[-1]
+    assert last.page == 1
+    assert last.y > 800  # A4 高 842,扣 6pt 后 ≈ 836
+
+
+def test_auto_detect_dividers_filters_non_question_numerics(tmp_path: Path) -> None:
+    """反例:页眉里的"5", 选项里的"1." 不应破坏题号链识别。
+
+    构造一份单页 PDF,故意混入容易误判的内容:
+    - 页眉 "5/8" 在右上角(应被左栏过滤掉)
+    - 题干内的 "1. 选项 A" 嵌在题 2 中间(同行非行首)
+    - 真正题号 1./2./3. 在页面左侧
+    应识别出 3 条题首 + 1 条末题底界 = 4 条分割线。
+    """
+    pdf_path = tmp_path / "noisy.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((520, 40), "5/8", fontsize=10)  # 右栏页码,左栏过滤掉
+    page.insert_text((72, 100), "1. 真题一题干", fontsize=12)
+    page.insert_text((90, 130), "    选项 A 包括 1. 一类", fontsize=10)  # 行首是空格 + 内嵌"1."
+    page.insert_text((72, 250), "2. 真题二题干", fontsize=12)
+    page.insert_text((72, 400), "3. 真题三题干", fontsize=12)
+    doc.save(pdf_path.as_posix())
+    doc.close()
+
+    dividers = pdf_service.auto_detect_dividers(pdf_path)
+    assert len(dividers) == 4, f"应识别出 3 题 + 1 末界 = 4 条,实际:{dividers}"
+    # 题首分割线应位于题号上方(y ≤ 题号 bbox.top)
+    assert dividers[0].y < 100
+    assert dividers[1].y < 250
+    assert dividers[2].y < 400
+
+
+def test_auto_detect_dividers_returns_empty_for_scan(scan_pdf: Path) -> None:
+    """扫描件无文字层 → 收集不到题号候选 → 返回空列表。"""
+    assert pdf_service.auto_detect_dividers(scan_pdf) == []
+
+
+def test_auto_detect_dividers_returns_empty_when_chain_too_short(tmp_path: Path) -> None:
+    """文字版但只有零星 "1." 一个题号(无 2./3./...)→ 链长 < 2,放弃。"""
+    pdf_path = tmp_path / "lone.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "1. lonely question", fontsize=12)
+    page.insert_text((72, 200), "no more numbers here", fontsize=12)
+    doc.save(pdf_path.as_posix())
+    doc.close()
+
+    assert pdf_service.auto_detect_dividers(pdf_path) == []

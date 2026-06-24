@@ -268,6 +268,44 @@ def test_upload_triggers_lru_when_over_storage_cap(
     assert not (storage.UPLOAD_DIR / old_id).exists(), "保护期外的旧 doc 应该被 LRU 清掉"
 
 
+def test_auto_detect_returns_dividers_for_text_pdf(client: TestClient, sample_pdf: Path) -> None:
+    """sample_pdf 每页 6 道题,两页共 12 题(题号 1..12)→ 应返回 12+1 = 13 条分割线。"""
+    with sample_pdf.open("rb") as fh:
+        up = client.post("/api/upload", files={"file": (sample_pdf.name, fh.read(), "application/pdf")})
+    doc_id = up.json()["doc_id"]
+
+    resp = client.post(f"/api/auto_detect/{doc_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_text"] is True
+    assert body["page_count"] == 2
+    # sample_pdf 每页 6 题,两页共 12 题
+    assert len(body["dividers"]) == 13
+    assert "12" in body["message"], "提示文案应包含识别到的题数"
+
+
+def test_auto_detect_reports_scan_pdf(client: TestClient, scan_pdf: Path) -> None:
+    """扫描件:返回 is_text=False + 空 dividers + 中文提示。"""
+    with scan_pdf.open("rb") as fh:
+        up = client.post("/api/upload", files={"file": (scan_pdf.name, fh.read(), "application/pdf")})
+    doc_id = up.json()["doc_id"]
+
+    resp = client.post(f"/api/auto_detect/{doc_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_text"] is False
+    assert body["dividers"] == []
+    assert "扫描件" in body["message"]
+
+
+def test_auto_detect_unknown_doc_returns_404(client: TestClient) -> None:
+    """与其它 doc 路由一样,doc_id 不存在 / 格式非法均统一 404。"""
+    # 合法 hex 格式但磁盘上不存在
+    assert client.post("/api/auto_detect/0123456789abcdef").status_code == 404
+    # 非法格式
+    assert client.post("/api/auto_detect/not-hex").status_code == 404
+
+
 def test_upload_lru_respects_protect_window(
     client: TestClient, sample_pdf, monkeypatch
 ) -> None:

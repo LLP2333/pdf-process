@@ -63,6 +63,25 @@
 | `question` | `Question` | 单题切分;跨页会被纵向拼接成一张 PNG |
 | `auto_trim` | bool,默认 `true` | 同 `ExportRequest.auto_trim` |
 
+### `DividerSuggestion`
+
+自动识别返回的"草稿分割线",仅含位置信息,不含前端的稳定 id;前端拿到列表后自行赋 id。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `page` | int (≥0) | 所在页 |
+| `y` | float (≥0) | 纵坐标(pt) |
+
+### `AutoDetectResponse`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `is_text` | bool | 是否文字版 PDF(每页可提取字符数 ≥ 20) |
+| `page_count` | int (≥0) | 页数 |
+| `char_count` | int (≥0) | 全文档可提取非空白字符总数 |
+| `dividers` | `DividerSuggestion[]` | 候选分割线;扫描件 / 无题号匹配时为空 |
+| `message` | string | 面向用户的中文提示(扫描件 / 文字版但未识别到题号 / 已识别 N 题) |
+
 ## 路由
 
 ### `GET /api/health`
@@ -167,6 +186,63 @@ curl http://localhost:8000/api/health
 - `404` `doc_id` 不存在或已过期
 - `422` 全部段都被规范化后判为无效(`page` 越界 / `y1 == y2`)
 - `500` 服务器内部异常(`detail` 会带原因)
+
+### `POST /api/auto_detect/{doc_id}`
+
+判断 PDF 是否文字版,并按"行首题号"自动给出草稿分割线。无请求体。
+
+**结果模型(三种业务场景统一 200,通过字段区分)**:
+
+1. 扫描件(文字层稀疏,每页可提取字符 < 20):
+
+```json
+{
+  "is_text": false,
+  "page_count": 4,
+  "char_count": 5,
+  "dividers": [],
+  "message": "该 PDF 似乎是扫描件(无文字层),无法自动识别题号,请手动添加分割线。"
+}
+```
+
+2. 文字版但找不到稳定的题号链(链长 < 2,例如全文只有一个 "1."):
+
+```json
+{
+  "is_text": true,
+  "page_count": 2,
+  "char_count": 432,
+  "dividers": [],
+  "message": "文档是文字版,但未能识别到稳定的题号序列,请手动添加分割线。"
+}
+```
+
+3. 文字版且识别到 N 题(N ≥ 2):返回 **N+1** 条分割线(N 条题首 + 1 条末题底界)。
+
+```json
+{
+  "is_text": true,
+  "page_count": 2,
+  "char_count": 1280,
+  "dividers": [
+    { "page": 0, "y": 94 },
+    { "page": 0, "y": 254 },
+    { "page": 1, "y": 110 },
+    { "page": 1, "y": 836 }
+  ],
+  "message": "已自动识别到 3 道题,可在 PDF 上微调或删除分割线。"
+}
+```
+
+**识别策略**(详见 `pdf_service.auto_detect_dividers`):
+- 行首正则 `^\s*(\d{1,3})\s*[\.\、\)\)]\s*\S`,要求题号后紧跟非空白字符;
+- 题号必须落在页面左侧(`bbox.x0 < 页宽 * 0.5`),过滤右栏页码 / 答题卡占位;
+- 候选按 (page, y) 排序后,用 O(n²) DP 选出"差为 1 的最长升序链",排除"选项里的 1."、"第 1 页"等噪音;
+- 末题下界放在链中最后一个题号所在页底部 `height - 6pt`,避免把"参考答案"卷入最后一题。
+
+**失败**:
+- `404` `doc_id` 不存在或已过期
+- `500` PyMuPDF 读取异常(`detail` 给出原因)
 
 ### 错误响应统一格式
 

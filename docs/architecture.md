@@ -2,7 +2,7 @@
 
 ## 一句话定位
 
-「上传一份文字型 PDF,在网页上单击加分割线(两条之间为一题),通过预览弹窗逐题二次裁剪上下边界(排除页眉/页码),一键导出横版 A4 PDF / 16:9 PPTX。」
+「上传一份文字型 PDF,可选择「自动识别题号」一键产出草稿分割线,在网页上单击加分割线(两条之间为一题),通过预览弹窗逐题二次裁剪上下边界(排除页眉/页码),一键导出横版 A4 PDF / 16:9 PPTX。」
 
 ## 目录结构
 
@@ -98,24 +98,40 @@
 | `app.main` | FastAPI 应用、路由、错误兜底,**不写业务** |
 | `app.schemas` | Pydantic 请求/响应模型,**所有外部契约的唯一源** |
 | `app.storage` | `uploads/`、`outputs/` 路径约定 + 单文件/总容量上限 + `maintenance()`(过期清理 + 超容量 LRU,带保护窗) |
-| `app.pdf_service` | PDF 预览渲染 + 自动去白边 + 矢量裁剪输出 PDF + 拼接单题预览 PNG |
+| `app.pdf_service` | PDF 预览渲染 + 自动去白边 + 矢量裁剪输出 PDF + 拼接单题预览 PNG + 文字层判定 / 题号自动识别 |
 | `app.ppt_service` | 把 PNG 段组装成 16:9 PPTX(依赖 `pdf_service.render_segments_to_png`) |
 
 ## 前端模块职责
 
 | 模块 | 职责 |
 | --- | --- |
-| `App.tsx` | 顶层状态:`doc`、`dividers`、`autoTrim`、`margin`、`adjustments`、`showPreview`、`activeQuestionIndex` |
+| `App.tsx` | 顶层状态:`doc`、`dividers`、`autoTrim`、`margin`、`adjustments`、`showPreview`、`activeQuestionIndex`、`autoDetecting / autoDetectMessage` |
 | `dividers.ts` | 纯函数 `buildQuestionsFromDividers`(N 条 → N-1 道题)+ `applyAdjustmentToQuestion` |
 | `api.ts` | 唯一对接后端的位置,所有 fetch / 错误抽取在此 |
 | `UploadPanel` | 上传交互,无业务状态 |
 | `PdfPage` | 单页 PDF + Konva Stage 叠加:单击新建 / 拖动调整 / Shift单击+× 删除分割线 |
 | `QuestionList` | 左栏:派生题目列表(跨页提示 + 二次裁剪角标)+ 跳转 + 清空分割线 |
-| `ExportPanel` | 左栏顶部:自动去白边 + 页边距 + 「预览裁剪效果」按钮 + 折叠左栏按钮 |
+| `ExportPanel` | 左栏顶部:「自动识别题号」按钮 + 结果提示 + 自动去白边 + 页边距 + 「预览裁剪效果」按钮 + 折叠左栏按钮 |
 | `PreviewModal` | 弹窗:逐题预览 + 顶部/底部再裁剪滑块 + 「确认并导出 PDF/PPTX」 |
+
+## 关键流程:自动识别题号
+
+`POST /api/auto_detect/{doc_id}` 在 `pdf_service` 内分两步走:
+
+1. **`detect_text_layer(pdf_path)`** —— 用 `page.get_text("text")` 取每页文字总字符数,平均 ≥ `TEXT_LAYER_MIN_CHARS_PER_PAGE`(20)才判定为文字版。扫描件每页只有零星 OCR 残片(常 < 10),会被直接判定为非文字版,前端据此提示用户回退到手动画线。
+2. **`auto_detect_dividers(pdf_path)`** —— 仅在文字版上运行:
+   - 用 `page.get_text("dict")` 拿到每行的 bbox 与文本;
+   - 行首正则 `^\s*(\d{1,3})\s*[\.\、\)\)]\s*\S` 匹配题号(强制后面紧跟非空白字符,排除"年份"、"页码");
+   - 题号必须位于页面左侧(`bbox.x0 < 页宽 * 0.5`),进一步排除右栏页码、答题卡占位等;
+   - 候选按 (page, y) 排序后,跑 O(n²) DP 选出"题号差为 1 的最长升序链",过滤"选项里的 1./2."与"第 1 页"等噪音(链长 < 2 视为无效);
+   - 链上每个题号上方 6pt 各画一条分割线;**末尾再加一条放在链中最后一个题号所在页底部 `height - 6pt`**,因为前端约定"两条相邻线之间为一题",N 个题号要切出 N 题需要 N+1 条线;不把分割线放到文档末页是为了避免误把"参考答案 / 答题卡"卷入最后一题。
+
+前端 `App.handleAutoDetect`:
+- 扫描件 / 无题号匹配 → 仅在 `ExportPanel` 顶部展示中文提示,不动用户已有的分割线;
+- 识别成功 → 用 `setDividers([...])` 替换(并 `setAdjustments({})` 清空二次裁剪),让用户基于草稿继续手工微调。
 
 ## 扩展点
 
-- **自动识别**:把项目早期 `split_exam.analyze` 移植成 `pdf_service.auto_detect(pdf_path) -> list[Divider]`,再加一个 `POST /api/auto_detect/{doc_id}` 返回草稿分割线即可。
+- **OCR 走通扫描件**:在 `detect_text_layer` 返回 `is_text=False` 后串一个 OCR(如 PaddleOCR / tesseract),再走 `auto_detect_dividers` 同款题号识别即可,前后端契约无需改动。
 - **横向裁剪**:在 `Segment` 模型加可选 `x1/x2`,`_normalize_segments` 已经预留好横向取页宽的位置;前端再加两条垂直辅助线;预览弹窗复用滑块控件即可。
 - **批量上传**:在 `storage` 加 `batch_id` 维度即可。

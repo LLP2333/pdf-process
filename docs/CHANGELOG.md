@@ -3,6 +3,15 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-06-24
+
+- **新增「自动识别题号」一键给出草稿分割线**:
+  - 后端 `pdf_service.detect_text_layer` 用"每页可提取字符数 ≥ 20"判定是否文字版,扫描件直接拦截;`pdf_service.auto_detect_dividers` 行首正则 `^\s*\d{1,3}\s*[\.\、\)\)]\s*\S` + 左栏过滤(`bbox.x0 < 页宽×0.5`)+ "差为 1 的最长升序链" DP 过滤误判,链上每个题号上方 6pt 一条分割线,末尾补一条"最后一题所在页底部 -6pt",N 题刚好切出 N+1 条线。
+  - 新增 `POST /api/auto_detect/{doc_id}` + `schemas.AutoDetectResponse / DividerSuggestion`,扫描件 / 无题号匹配 / 已识别 N 题三种业务结果通过 `is_text` + `dividers` + `message` 字段统一在 200 响应内区分,前端展示用户中文提示。
+  - 前端 `ExportPanel` 顶部新增「✨ 自动识别题号」按钮 + 结果提示条(`info / warn / error` 三色);`App.handleAutoDetect` 在识别成功时用结果替换 `dividers` 并清空 `adjustments`,扫描件 / 失败时只展示提示不动用户已有分割线。
+  - 文档同步 `docs/api.md`、`docs/architecture.md`。
+  - 测试:后端 +6 用例(`detect_text_layer` 正反例、`auto_detect_dividers` N+1 条/噪音过滤/扫描件/孤立题号、`/api/auto_detect` 正反例 + 404),前端 +6 用例(`api.autoDetect` 正反例、ExportPanel 按钮 / 加载态 / 提示样式)。
+
 ## 2026-06-15
 
 - **新增 Windows 桌面客户端 + CI 自动出包**:`desktop/launcher.py` 把后端 uvicorn(后台线程)与前端 `dist/` 同源挂在一个进程/端口,主线程用 Tkinter 提供「打开网页 / 打开数据目录 / 停止并退出」启停窗口,用户仍走本地浏览器;`desktop/exam_splitter.spec`(PyInstaller onefile + `collect_all`)+ `desktop/requirements.txt` 负责打包;新增 `.github/workflows/build-windows.yml`,在 `windows-latest` 上 `npm run build` → `pyinstaller` 产出 `ExamSplitter.exe`,手动触发上传 Artifact、打 `v*` tag 时附到 Release。数据目录落 `%LOCALAPPDATA%\ExamSplitter`。文档同步 `docs/architecture.md`、`docs/development.md`。

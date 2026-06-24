@@ -55,6 +55,21 @@ export interface PreviewResult {
   empty: boolean;
 }
 
+/** 自动识别返回的草稿分割线(无前端稳定 id,前端拿到后再各自赋 id)。 */
+export interface DividerSuggestion {
+  page: number;
+  y: number;
+}
+
+/** 与后端 `AutoDetectResponse` 对齐的响应模型。 */
+export interface AutoDetectResponse {
+  is_text: boolean;
+  page_count: number;
+  char_count: number;
+  dividers: DividerSuggestion[];
+  message: string;
+}
+
 const API = "/api";
 
 export async function uploadPdf(file: File): Promise<UploadResponse> {
@@ -128,6 +143,25 @@ export async function previewQuestion(
   const empty = resp.headers.get("X-Empty") === "1";
   const blob = await resp.blob();
   return { url: URL.createObjectURL(blob), empty };
+}
+
+/**
+ * 调用 `POST /api/auto_detect/{docId}` 让后端识别题号 → 给出草稿分割线。
+ *
+ * 后端会先做"扫描件 vs 文字版"判定:
+ * - 扫描件 → `is_text=false`,`dividers=[]`,前端应展示 `message` 并保持现有分割线;
+ * - 文字版 + 识别到 ≥2 个题号 → `dividers` 含 N+1 条(N 题首 + 末题底界);
+ * - 文字版但识别失败(题号链 < 2) → `dividers=[]` + 解释性 `message`。
+ *
+ * 接口本身不抛 4xx 区分上述三种"业务结果",仅在 doc 不存在时 404 / 服务器异常 5xx。
+ */
+export async function autoDetect(docId: string): Promise<AutoDetectResponse> {
+  const resp = await fetch(`${API}/auto_detect/${docId}`, { method: "POST" });
+  if (!resp.ok) {
+    const msg = await safeError(resp);
+    throw new Error(msg);
+  }
+  return resp.json();
 }
 
 async function safeError(resp: Response): Promise<string> {

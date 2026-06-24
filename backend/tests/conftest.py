@@ -46,6 +46,24 @@ def sample_pdf(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def scan_pdf(tmp_path: Path) -> Path:
+    """伪造"扫描件":每页只填一张大灰矩形,几乎无可提取文字层。
+
+    用于验证 `pdf_service.detect_text_layer` 能正确判定"非文字版";
+    与 `sample_pdf`(每页有几十个 ASCII 字符)是一对正反例。
+    """
+    pdf_path = tmp_path / "scan.pdf"
+    doc = fitz.open()
+    for _ in range(2):
+        page = doc.new_page(width=595, height=842)
+        # 用矩形 + 大量空白模拟扫描页;一行短文字保留也行,但保持极简,确保字符 < 阈值
+        page.draw_rect(fitz.Rect(40, 40, 555, 800), color=(0.85, 0.85, 0.85), fill=(0.9, 0.9, 0.9))
+    doc.save(pdf_path.as_posix())
+    doc.close()
+    return pdf_path
+
+
+@pytest.fixture
 def tmp_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把 storage 的几个全局路径重定向到 `tmp_path`。"""
     base = tmp_path / "data"

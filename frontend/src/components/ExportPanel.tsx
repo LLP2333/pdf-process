@@ -1,3 +1,9 @@
+interface AutoDetectMessage {
+  text: string;
+  /** 提示色调:info=绿(识别成功)/ warn=黄(无题号)/ error=红(扫描件 / 网络异常)。 */
+  tone: "info" | "warn" | "error";
+}
+
 interface Props {
   questionCount: number;
   autoTrim: boolean;
@@ -8,13 +14,25 @@ interface Props {
   onOpenPreview: () => void;
   /** 折叠左侧栏:平板等窄屏下把参数面板收起,给 PDF 预览区让出空间。 */
   onCollapse: () => void;
+  /** 调后端 `/api/auto_detect` 自动识别题号 → 替换分割线。 */
+  onAutoDetect: () => void;
+  /** 自动识别请求进行中(禁用按钮 + 文字提示)。 */
+  autoDetecting: boolean;
+  /** 上一次自动识别的结果文案(扫描件 / 已识别 N 题 / 失败原因)。 */
+  autoDetectMessage: AutoDetectMessage | null;
 }
 
 /**
  * 导出准备面板:被挂在左栏顶部。
  *
- * 仅承担「设置导出参数 + 打开预览」两件事。真正的导出按钮放在 PreviewModal 内,
- * 因为用户应当先看到裁剪效果(尤其是页眉/页脚是否被误带),再决定要不要落盘。
+ * 承担三件事:
+ * 1. 设置导出参数(自动去白边、页边距);
+ * 2. 「自动识别」按钮:对文字版 PDF 一键识别题号,扫描件会通过提示文案告知用户;
+ * 3. 「预览裁剪效果」按钮:打开弹窗逐题二次裁剪,并在弹窗里完成最终导出。
+ *
+ * Why 自动识别按钮放这里:与"导出参数"同属"全局动作",且要先决定"是否需要手动画分割线",
+ * 自然走在用户的视觉路径首位。真正的导出按钮放在 PreviewModal 内,因为用户应当先看到
+ * 裁剪效果(尤其是页眉/页脚是否被误带),再决定要不要落盘。
  */
 export default function ExportPanel({
   questionCount,
@@ -24,6 +42,9 @@ export default function ExportPanel({
   onMarginChange,
   onOpenPreview,
   onCollapse,
+  onAutoDetect,
+  autoDetecting,
+  autoDetectMessage,
 }: Props) {
   const disabled = questionCount === 0;
   return (
@@ -39,6 +60,19 @@ export default function ExportPanel({
           ‹
         </button>
       </div>
+      <button
+        className="btn ghost auto-detect-btn"
+        onClick={onAutoDetect}
+        disabled={autoDetecting}
+        title="判断 PDF 是否文字版,文字版会按行首题号自动添加分割线"
+      >
+        {autoDetecting ? "识别中…" : "✨ 自动识别题号"}
+      </button>
+      {autoDetectMessage && (
+        <div className={`auto-detect-msg auto-detect-${autoDetectMessage.tone}`}>
+          {autoDetectMessage.text}
+        </div>
+      )}
       <label className="export-row">
         <input
           type="checkbox"

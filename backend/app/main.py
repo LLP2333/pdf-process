@@ -12,6 +12,7 @@
 - `GET  /api/pages/{doc_id}/{name}` 静态返回上一接口产生的预览 PNG
 - `POST /api/preview/{doc_id}`     单题实时预览(纵向拼接成单张 PNG)
 - `POST /api/export/{doc_id}`       按 {format, margin, auto_trim, questions} 矢量裁剪并下载产物
+- `POST /api/auto_detect/{doc_id}`  判定文字版 / 扫描件,顺带尝试识别题号给出草稿分割线
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from . import pdf_service, ppt_service, storage
-from .schemas import ExportRequest, PreviewRequest, UploadResponse
+from .schemas import AutoDetectResponse, ExportRequest, PreviewRequest, UploadResponse
 
 # doc_id 严格白名单:必须是 `new_doc_id()` 生成的 16 位小写 hex,任何其它形式一律按"未找到"处理。
 # 这样可以阻止 `../`、绝对路径、过长字符串等路径遍历尝试,
@@ -308,6 +309,68 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
             "Content-Disposition": f"attachment; filename*=UTF-8''{quote(download)}",
             "X-Question-Count": str(made),
         },
+    )
+
+
+@app.post(
+    "/api/auto_detect/{doc_id}",
+    response_model=AutoDetectResponse,
+    summary="自动识别题号并给出草稿分割线",
+    description=(
+        "根据 PDF 的文字层做两件事:1) 判断是否文字版(扫描件 / 加密件没文字层时无法识别);"
+        "2) 文字版时按「行首题号」(如 `1.`、`2、`、`3)`)推出每道题的上界,再补一条「末题下界」,"
+        "返回 N+1 条分割线,前端可直接替换当前画面上的分割线。"
+        "扫描件 / 无题号匹配 / 题号链 < 2 时,`dividers` 返回空数组,`message` 给出中文提示。"
+    ),
+    responses={
+        200: {"description": "返回判定结果与候选分割线"},
+        404: {"description": "doc_id 不存在或已过期"},
+    },
+)
+def auto_detect(doc_id: str) -> AutoDetectResponse:
+    """读取已上传的 PDF,做「扫描件 vs 文字版」判定 + 题号识别。
+
+    - 扫描件(文字层稀疏):返回 `is_text=False`,提示用户回退到手动画线;
+    - 文字版但找不到稳定的题号链(< 2 个):返回空 dividers + 解释性 message;
+    - 文字版且识别到 N 题:返回 N+1 条分割线(N 条题首 + 1 条末题底界)。
+    """
+    in_path = _require_doc(doc_id)
+    try:
+        is_text, char_count, page_count = pdf_service.detect_text_layer(in_path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"读取 PDF 失败:{exc}") from exc
+
+    if not is_text:
+        return AutoDetectResponse(
+            is_text=False,
+            page_count=page_count,
+            char_count=char_count,
+            dividers=[],
+            message="该 PDF 似乎是扫描件(无文字层),无法自动识别题号,请手动添加分割线。",
+        )
+
+    try:
+        dividers = pdf_service.auto_detect_dividers(in_path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"自动识别失败:{exc}") from exc
+
+    if not dividers:
+        return AutoDetectResponse(
+            is_text=True,
+            page_count=page_count,
+            char_count=char_count,
+            dividers=[],
+            message="文档是文字版,但未能识别到稳定的题号序列,请手动添加分割线。",
+        )
+
+    # N+1 条分割线 = N 道题(每两条相邻线之间一题)
+    question_count = max(0, len(dividers) - 1)
+    return AutoDetectResponse(
+        is_text=True,
+        page_count=page_count,
+        char_count=char_count,
+        dividers=dividers,
+        message=f"已自动识别到 {question_count} 道题,可在 PDF 上微调或删除分割线。",
     )
 
 

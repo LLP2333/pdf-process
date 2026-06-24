@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { uploadPdf, exportFile, previewQuestion, type ExportRequest } from "../src/api";
+import {
+  uploadPdf,
+  exportFile,
+  previewQuestion,
+  autoDetect,
+  type ExportRequest,
+} from "../src/api";
 
 describe("api.ts", () => {
   beforeEach(() => {
@@ -141,5 +147,52 @@ describe("api.ts", () => {
         auto_trim: true,
       })
     ).rejects.toThrow("文档不存在或已过期");
+  });
+
+  it("autoDetect 成功返回 dividers 列表(文字版)", async () => {
+    const body = {
+      is_text: true,
+      page_count: 2,
+      char_count: 320,
+      dividers: [
+        { page: 0, y: 80 },
+        { page: 0, y: 240 },
+        { page: 1, y: 400 },
+      ],
+      message: "已自动识别到 2 道题",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })),
+    );
+    const r = await autoDetect("doc1");
+    expect(r.is_text).toBe(true);
+    expect(r.dividers).toHaveLength(3);
+  });
+
+  it("autoDetect 扫描件返回 is_text=false + 空 dividers", async () => {
+    const body = {
+      is_text: false,
+      page_count: 4,
+      char_count: 3,
+      dividers: [],
+      message: "该 PDF 似乎是扫描件",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })),
+    );
+    const r = await autoDetect("doc1");
+    expect(r.is_text).toBe(false);
+    expect(r.dividers).toEqual([]);
+    expect(r.message).toContain("扫描件");
+  });
+
+  it("autoDetect 失败时抛出后端 detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: "文档不存在或已过期" }), { status: 404 })),
+    );
+    await expect(autoDetect("missing")).rejects.toThrow("文档不存在或已过期");
   });
 });

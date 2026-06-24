@@ -81,3 +81,36 @@ class PreviewRequest(BaseModel):
 
     question: Question
     auto_trim: bool = Field(True, description="是否启用自动去白边")
+
+
+class DividerSuggestion(BaseModel):
+    """自动识别给出的"草稿分割线",仅含位置信息,不含前端的稳定 id。
+
+    前端拿到列表后会逐条赋上 `newDividerId()` 再放进 dividers 状态。
+    """
+
+    page: int = Field(..., ge=0, description="所在页(0 起)")
+    y: float = Field(..., ge=0, description="纵坐标(pt,PDF 原始坐标)")
+
+
+class AutoDetectResponse(BaseModel):
+    """`POST /api/auto_detect/{doc_id}` 的响应。
+
+    前端先看 `is_text`:False 时给"扫描件无法自动识别"的提示并保持现有分割线不动;
+    True 时用 `dividers` 替换掉用户当前的分割线(同时清空 adjustments)。
+    """
+
+    is_text: bool = Field(..., description="是否文字版 PDF(每页可提取字符数足够多)")
+    page_count: int = Field(..., ge=0, description="页数")
+    char_count: int = Field(..., ge=0, description="文档可提取非空白字符总数")
+    dividers: list[DividerSuggestion] = Field(
+        default_factory=list,
+        description="自动识别出的题号 + 末题下界生成的分割线;扫描件或无题号时为空",
+    )
+    message: str = Field(
+        ...,
+        description=(
+            "面向用户的中文提示:扫描件 / 文字版但未识别到题号 / 文字版识别到 N 题。"
+            "前端可直接展示。"
+        ),
+    )

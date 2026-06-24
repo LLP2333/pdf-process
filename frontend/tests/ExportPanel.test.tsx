@@ -10,6 +10,9 @@ function renderPanel(opts?: {
   onMargin?: (v: number) => void;
   onOpenPreview?: () => void;
   onCollapse?: () => void;
+  onAutoDetect?: () => void;
+  autoDetecting?: boolean;
+  autoDetectMessage?: { text: string; tone: "info" | "warn" | "error" } | null;
 }) {
   return render(
     <ExportPanel
@@ -20,6 +23,9 @@ function renderPanel(opts?: {
       onMarginChange={opts?.onMargin ?? (() => {})}
       onOpenPreview={opts?.onOpenPreview ?? (() => {})}
       onCollapse={opts?.onCollapse ?? (() => {})}
+      onAutoDetect={opts?.onAutoDetect ?? (() => {})}
+      autoDetecting={opts?.autoDetecting ?? false}
+      autoDetectMessage={opts?.autoDetectMessage ?? null}
     />,
   );
 }
@@ -64,5 +70,26 @@ describe("ExportPanel", () => {
     expect(onMargin).toHaveBeenLastCalledWith(120);
     fireEvent.change(input, { target: { value: "-5" } });
     expect(onMargin).toHaveBeenLastCalledWith(0);
+  });
+
+  it("点击「自动识别题号」会触发 onAutoDetect", () => {
+    const onAutoDetect = vi.fn();
+    renderPanel({ onAutoDetect });
+    fireEvent.click(screen.getByText(/自动识别题号/));
+    expect(onAutoDetect).toHaveBeenCalledTimes(1);
+  });
+
+  it("autoDetecting=true 时按钮文案变为「识别中…」且被禁用", () => {
+    renderPanel({ autoDetecting: true });
+    const btn = screen.getByText("识别中…") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("有提示文案时按 tone 渲染对应样式类", () => {
+    renderPanel({
+      autoDetectMessage: { text: "该 PDF 似乎是扫描件", tone: "error" },
+    });
+    const msg = screen.getByText(/扫描件/);
+    expect(msg.className).toMatch(/auto-detect-error/);
   });
 });
