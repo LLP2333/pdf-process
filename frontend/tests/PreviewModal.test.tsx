@@ -13,6 +13,8 @@ function renderModal(opts?: {
   questions?: DerivedQuestion[];
   adjustments?: Record<string, { top: number; bottom: number }>;
   onAdj?: (id: string, adj: { top: number; bottom: number }) => void;
+  excluded?: Record<string, true>;
+  onToggleExcluded?: (id: string) => void;
   onClose?: () => void;
 }) {
   return render(
@@ -25,6 +27,8 @@ function renderModal(opts?: {
       margin={28}
       adjustments={opts?.adjustments ?? {}}
       onAdjustmentChange={opts?.onAdj ?? (() => {})}
+      excludedQuestions={opts?.excluded ?? {}}
+      onToggleExcluded={opts?.onToggleExcluded ?? (() => {})}
       onClose={opts?.onClose ?? (() => {})}
     />,
   );
@@ -120,6 +124,102 @@ describe("PreviewModal", () => {
       { page: 1, y1: 0, y2: 842 },
     ]);
     expect(body.question.trim).toEqual({ top: 12, bottom: 50 });
+  });
+
+  it("点击题号前的复选框会触发 onToggleExcluded,带入对应题 id", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["x"], { type: "image/png" }), { status: 200 })),
+    );
+    const onToggleExcluded = vi.fn();
+    renderModal({ onToggleExcluded });
+    // 第一题的复选框,通过 aria-label 定位
+    const cb = screen.getByLabelText("第 1 题是否导出") as HTMLInputElement;
+    expect(cb.checked).toBe(true); // 默认导出
+    fireEvent.click(cb);
+    expect(onToggleExcluded).toHaveBeenCalledWith("a|b");
+  });
+
+  it("被排除的题:卡片带 modal-card-excluded 类、复选框未勾选、显示「不导出」徽标", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["x"], { type: "image/png" }), { status: 200 })),
+    );
+    const { container } = renderModal({ excluded: { "a|b": true } });
+    const card = container.querySelector(".modal-card:first-of-type");
+    expect(card?.className).toContain("modal-card-excluded");
+    const cb = screen.getByLabelText("第 1 题是否导出") as HTMLInputElement;
+    expect(cb.checked).toBe(false);
+    expect(screen.getByText("不导出")).toBeInTheDocument();
+  });
+
+  it("头部计数:有题被排除时显示「X / Y 道题将导出」", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["x"], { type: "image/png" }), { status: 200 })),
+    );
+    renderModal({ excluded: { "a|b": true } });
+    expect(screen.getByText("1 / 2 道题将导出")).toBeInTheDocument();
+  });
+
+  it("全部题被排除:导出按钮禁用,文案带「(0)」", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["x"], { type: "image/png" }), { status: 200 })),
+    );
+    renderModal({ excluded: { "a|b": true, "b|c": true } });
+    const pdfBtn = screen.getByText(/确认并导出 PDF \(0\)/) as HTMLButtonElement;
+    const pptxBtn = screen.getByText(/导出 PPTX \(0\)/) as HTMLButtonElement;
+    expect(pdfBtn.disabled).toBe(true);
+    expect(pptxBtn.disabled).toBe(true);
+  });
+
+  it("导出请求:被排除的题不会出现在 questions 中,且剩余题号被重新连续编号", async () => {
+    const blob = new Blob(["%PDF"], { type: "application/pdf" });
+    const fname = encodeURIComponent("试卷切割重组.pdf");
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.startsWith("/api/preview/")) {
+        return new Response(new Blob(["x"], { type: "image/png" }), { status: 200 });
+      }
+      return new Response(blob, {
+        status: 200,
+        headers: {
+          "Content-Disposition": `attachment; filename*=UTF-8''${fname}`,
+          "X-Question-Count": "1",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const anchor = {
+      click: vi.fn(),
+      remove: vi.fn(),
+      set href(_v: string) {},
+      set download(_v: string) {},
+    } as unknown as HTMLAnchorElement;
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      if (tag === "a") return anchor;
+      return origCreate(tag);
+    });
+
+    // 排除第 1 题,只导出第 2 题
+    renderModal({ excluded: { "a|b": true } });
+    fireEvent.click(screen.getByText(/确认并导出 PDF \(1\)/));
+
+    await waitFor(() => {
+      const has = fetchSpy.mock.calls.some(
+        (c) => typeof c[0] === "string" && (c[0] as string).startsWith("/api/export/"),
+      );
+      expect(has).toBe(true);
+    });
+    const exportCall = fetchSpy.mock.calls.find(
+      (c) => typeof c[0] === "string" && (c[0] as string).startsWith("/api/export/"),
+    ) as unknown as [string, RequestInit];
+    const body = JSON.parse(exportCall[1].body as string);
+    expect(body.questions).toHaveLength(1);
+    // 剩下的题被重新编号为 1
+    expect(body.questions[0].no).toBe(1);
+    expect(body.questions[0].segments[0]).toEqual({ page: 0, y1: 400, y2: 700 });
   });
 
   it("点导出按钮调用 /api/export 并把 trim 作为字段带到 question 上", async () => {

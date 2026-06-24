@@ -52,7 +52,7 @@ cd backend
 | `dividers.test.ts` | `buildQuestionsFromDividers`:0/1 条分割线返回空、N 条 → N-1 道题、跨页拆段、乱序排序、稳定 id;`applyAdjustmentToQuestion`:无调整 / 顶裁 / 底裁 / 过度裁剪丢弃越界段 |
 | `QuestionList.test.tsx` | 0/1 条分割线的两种引导文案、单页 vs「跨 N 页」标签、二次裁剪 ✎ 角标、清空按钮禁用、点击触发选中 |
 | `ExportPanel.test.tsx` | 无题时按钮禁用 + 文案;有题时按钮带题数 + 触发预览;auto_trim / margin 受控联动并被夹到 0-120;**「自动识别题号」按钮触发回调 / 加载态文案 / 三色提示样式** |
-| `PreviewModal.test.tsx` | open=false 不渲染;打开后渲染每题图片;改顶部滑块带 question id 触发回调;关闭回调;导出时 segments 已应用 adjustment |
+| `PreviewModal.test.tsx` | open=false 不渲染;打开后渲染每题图片;改顶部滑块带 question id 触发回调;关闭回调;导出时 segments 已应用 adjustment;**每题"是否导出"复选框:回调 / 灰显 className / 头部 X/Y 计数 / 全排除时按钮禁用 (0) / 导出请求体过滤 + 剩余题号重排** |
 
 > `PdfPage` 重度依赖 `react-konva` + Canvas,jsdom 难以稳定测;暂以视觉手测为主,后续可考虑 Playwright e2e。
 
@@ -67,7 +67,7 @@ npm run build           # 顺带 tsc -b 严格类型检查
 
 ### 期望状态
 
-当前:**42 passed**;`npm run build` 通过。
+当前:**47 passed**;`npm run build` 通过。
 
 ## CI 建议
 

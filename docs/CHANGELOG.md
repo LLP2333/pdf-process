@@ -5,6 +5,12 @@
 
 ## 2026-06-24
 
+- **预览弹窗逐题"是否导出"开关**:
+  - `App.tsx` 新增顶层状态 `excludedQuestions: Record<string, true>`(反向记录被排除的题,默认导出),与 `adjustments` 共用孤儿清理 effect;`reset / onUploaded / clearDividers / handleAutoDetect` 切换分割线时同步清空。
+  - `PreviewModal` 卡片头部加入复选框 `aria-label="第 N 题是否导出"`,默认勾选;取消时整张卡 `opacity: 0.6` + 题号删除线 + 红色"不导出"徽标。头部副标题文案动态显示 `X / Y 道题将导出`,底部按钮文案带 `(N)` 计数;`includedCount === 0` 时按钮禁用 + 文字提示"请至少勾选一题"。
+  - `doExport`:先按 `excludedQuestions` 过滤、再 `applyAdjustment`、再丢空段,最后 `map((q, idx) => ({...q, no: idx + 1}))` **重新连续编号**避免后端按 `no` 排序后题号跳变。后端契约不需改动。
+  - 测试 +5 用例:勾选/取消的回调与题 id、卡片灰显 className + "不导出"徽标、头部计数文案、全排除时按钮禁用 (0)、`/api/export` 请求体不含被排除题 + 剩余题号被重新编号。
+
 - **新增「自动识别题号」一键给出草稿分割线**:
   - 后端 `pdf_service.detect_text_layer` 用"每页可提取字符数 ≥ 20"判定是否文字版,扫描件直接拦截;`pdf_service.auto_detect_dividers` 行首正则 `^\s*\d{1,3}\s*[\.\、\)\)]\s*\S` + 左栏过滤(`bbox.x0 < 页宽×0.5`)+ "差为 1 的最长升序链" DP 过滤误判,链上每个题号上方 6pt 一条分割线,末尾补一条"最后一题所在页底部 -6pt",N 题刚好切出 N+1 条线。
   - 新增 `POST /api/auto_detect/{doc_id}` + `schemas.AutoDetectResponse / DividerSuggestion`,扫描件 / 无题号匹配 / 已识别 N 题三种业务结果通过 `is_text` + `dividers` + `message` 字段统一在 200 响应内区分,前端展示用户中文提示。

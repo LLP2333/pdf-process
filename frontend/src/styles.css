@@ -358,9 +358,47 @@ body {
   background: #fafafa;
   border-bottom: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
 }
 .modal-card-head .qno { font-weight: 700; }
-.modal-card-meta { color: var(--muted); font-size: 12.5px; }
+.modal-card-meta {
+  color: var(--muted);
+  font-size: 12.5px;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+
+/* 「勾选导出」开关 —— 与题号合并成同一可点击区域 */
+.modal-card-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.modal-card-toggle input[type="checkbox"] {
+  width: 16px; height: 16px;
+  accent-color: var(--brand);
+  cursor: pointer;
+  margin: 0;
+}
+
+/* 「不导出」徽标 */
+.modal-card-skip {
+  display: inline-flex; align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--err);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* 被排除的题:整张卡灰显 + 题号删除线,但预览图保留可读性 */
+.modal-card-excluded { opacity: 0.6; }
+.modal-card-excluded .qno {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.modal-card-excluded .modal-card-thumb { background: #f3f4f6; }
 .modal-card-thumb {
   background: #f3f4f6;
   display: flex; align-items: center; justify-content: center;

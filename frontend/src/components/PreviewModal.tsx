@@ -13,6 +13,10 @@ interface Props {
   margin: number;
   adjustments: Record<string, Adjustment>;
   onAdjustmentChange: (questionId: string, adj: Adjustment) => void;
+  /** 被用户标记"不导出"的题目集合(以 question.id 为 key)。默认导出 ⇒ 反向记录。 */
+  excludedQuestions: Record<string, true>;
+  /** 切换某题是否参与导出。 */
+  onToggleExcluded: (questionId: string) => void;
   onClose: () => void;
 }
 
@@ -43,6 +47,8 @@ export default function PreviewModal({
   margin,
   adjustments,
   onAdjustmentChange,
+  excludedQuestions,
+  onToggleExcluded,
   onClose,
 }: Props) {
   const [entries, setEntries] = useState<Record<string, Entry>>({});
@@ -153,11 +159,18 @@ export default function PreviewModal({
 
   async function doExport(format: "pdf" | "pptx") {
     if (busy) return;
+    // 先按"勾选导出"过滤,再应用 adjustment,再丢空段题。
+    // 重新连续编号(`no = idx + 1`)避免后端按 `no` 排序时遗留"跳号"导致页面顺序错乱。
     const payloadQuestions = derivedQuestions
+      .filter((q) => !excludedQuestions[q.id])
       .map((q) => applyAdjustmentToQuestion(q, adjustments[q.id]))
-      .filter((q) => q.segments.length > 0);
+      .filter((q) => q.segments.length > 0)
+      .map((q, idx) => ({ ...q, no: idx + 1 }));
     if (payloadQuestions.length === 0) {
-      setExportMsg({ kind: "err", text: "二次裁剪后没有可导出的题目,请放宽边界" });
+      setExportMsg({
+        kind: "err",
+        text: "没有可导出的题目:请至少勾选一题,或检查二次裁剪是否过窄",
+      });
       return;
     }
     setBusy(format);
@@ -188,6 +201,12 @@ export default function PreviewModal({
 
   if (!open) return null;
 
+  // 仅用于头部 / 底部按钮文案与禁用判定;真正的导出过滤在 `doExport` 内重做(保证一致)。
+  const includedCount = derivedQuestions.reduce(
+    (n, q) => (excludedQuestions[q.id] ? n : n + 1),
+    0,
+  );
+
   return (
     <div
       className="modal-backdrop"
@@ -201,7 +220,11 @@ export default function PreviewModal({
       <div className="modal">
         <div className="modal-head">
           <strong>试卷裁剪预览</strong>
-          <span className="modal-sub">{derivedQuestions.length} 道题</span>
+          <span className="modal-sub">
+            {includedCount === derivedQuestions.length
+              ? `${derivedQuestions.length} 道题`
+              : `${includedCount} / ${derivedQuestions.length} 道题将导出`}
+          </span>
           <button className="modal-close" onClick={onClose} aria-label="关闭">
             ×
           </button>
@@ -214,11 +237,27 @@ export default function PreviewModal({
           {derivedQuestions.map((q) => {
             const entry = entries[q.id];
             const adj = adjustments[q.id] ?? { top: 0, bottom: 0 };
+            const excluded = !!excludedQuestions[q.id];
             return (
-              <div key={q.id} className="modal-card">
+              <div
+                key={q.id}
+                className={"modal-card" + (excluded ? " modal-card-excluded" : "")}
+              >
                 <div className="modal-card-head">
-                  <span className="qno">第 {q.no} 题</span>
+                  <label
+                    className="modal-card-toggle"
+                    title={excluded ? "勾选以加入导出" : "取消勾选则不导出本题"}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!excluded}
+                      onChange={() => onToggleExcluded(q.id)}
+                      aria-label={`第 ${q.no} 题是否导出`}
+                    />
+                    <span className="qno">第 {q.no} 题</span>
+                  </label>
                   <span className="modal-card-meta">
+                    {excluded && <span className="modal-card-skip">不导出</span>}
                     {q.segments.length > 1 ? `跨 ${q.segments.length} 页` : `单页`} ·{" "}
                     {entry?.status === "loading" ? "渲染中…" : "实时预览"}
                   </span>
@@ -273,16 +312,18 @@ export default function PreviewModal({
             <button
               className="btn"
               onClick={() => doExport("pptx")}
-              disabled={busy !== null || derivedQuestions.length === 0}
+              disabled={busy !== null || includedCount === 0}
+              title={includedCount === 0 ? "请至少勾选一题" : undefined}
             >
-              {busy === "pptx" ? "导出中…" : "导出 PPTX"}
+              {busy === "pptx" ? "导出中…" : `导出 PPTX (${includedCount})`}
             </button>
             <button
               className="btn primary"
               onClick={() => doExport("pdf")}
-              disabled={busy !== null || derivedQuestions.length === 0}
+              disabled={busy !== null || includedCount === 0}
+              title={includedCount === 0 ? "请至少勾选一题" : undefined}
             >
-              {busy === "pdf" ? "导出中…" : "确认并导出 PDF"}
+              {busy === "pdf" ? "导出中…" : `确认并导出 PDF (${includedCount})`}
             </button>
           </div>
         </div>

@@ -16,6 +16,10 @@ export default function App() {
   const [autoTrim, setAutoTrim] = useState(true);
   const [margin, setMargin] = useState(28);
   const [adjustments, setAdjustments] = useState<Record<string, Adjustment>>({});
+  // 哪些题被用户在预览弹窗里"取消导出"了。
+  // Why 反向记录(默认导出,只存被排除的):一来更省内存,二来"新增题目默认导出"的行为天然成立 ——
+  // 删一条分割线 → 重新派生出的新题 id 不在 excluded 里 → 默认勾选。
+  const [excludedQuestions, setExcludedQuestions] = useState<Record<string, true>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState<number | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
@@ -35,6 +39,7 @@ export default function App() {
     setDoc(null);
     setDividers([]);
     setAdjustments({});
+    setExcludedQuestions({});
     setActiveQuestionIndex(null);
     setShowPreview(false);
     setAutoDetectMessage(null);
@@ -44,6 +49,7 @@ export default function App() {
     setDoc(d);
     setDividers([]);
     setAdjustments({});
+    setExcludedQuestions({});
     setActiveQuestionIndex(null);
     setAutoDetectMessage(null);
   }, []);
@@ -86,6 +92,7 @@ export default function App() {
   const clearDividers = useCallback(() => {
     setDividers([]);
     setAdjustments({});
+    setExcludedQuestions({});
     setActiveQuestionIndex(null);
   }, []);
 
@@ -110,7 +117,7 @@ export default function App() {
         setAutoDetectMessage({ text: result.message, tone: "warn" });
         return;
       }
-      // 替换为草稿分割线;旧分割线相关的 adjustments 一并失效
+      // 替换为草稿分割线;旧分割线相关的 adjustments / excludedQuestions 一并失效
       const next: Divider[] = result.dividers.map((d) => ({
         id: newDividerId(),
         page: d.page,
@@ -118,6 +125,7 @@ export default function App() {
       }));
       setDividers(next);
       setAdjustments({});
+      setExcludedQuestions({});
       setActiveQuestionIndex(null);
       setAutoDetectMessage({ text: result.message, tone: "info" });
     } catch (e: unknown) {
@@ -150,23 +158,41 @@ export default function App() {
     });
   }, []);
 
+  /** 切换某题"是否参与导出"。默认导出 ⇒ 反向记录:存在于 `excludedQuestions` 即为不导出。 */
+  const toggleQuestionExcluded = useCallback((id: string) => {
+    setExcludedQuestions((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (activeQuestionIndex !== null && activeQuestionIndex >= derivedQuestions.length) {
       setActiveQuestionIndex(null);
     }
   }, [activeQuestionIndex, derivedQuestions.length]);
 
-  // 清理孤儿 adjustments(对应分割线已被删除)
+  // 清理孤儿 adjustments / excludedQuestions(对应分割线已被删除)
   useEffect(() => {
     const validIds = new Set(derivedQuestions.map((q) => q.id));
-    let dirty = false;
-    const next: Record<string, Adjustment> = {};
+    let dirtyAdj = false;
+    const nextAdj: Record<string, Adjustment> = {};
     for (const [k, v] of Object.entries(adjustments)) {
-      if (validIds.has(k)) next[k] = v;
-      else dirty = true;
+      if (validIds.has(k)) nextAdj[k] = v;
+      else dirtyAdj = true;
     }
-    if (dirty) setAdjustments(next);
-  }, [derivedQuestions, adjustments]);
+    if (dirtyAdj) setAdjustments(nextAdj);
+
+    let dirtyExc = false;
+    const nextExc: Record<string, true> = {};
+    for (const k of Object.keys(excludedQuestions)) {
+      if (validIds.has(k)) nextExc[k] = true;
+      else dirtyExc = true;
+    }
+    if (dirtyExc) setExcludedQuestions(nextExc);
+  }, [derivedQuestions, adjustments, excludedQuestions]);
 
   const pageView = useMemo(() => {
     if (!doc) return null;
@@ -283,6 +309,8 @@ export default function App() {
           margin={margin}
           adjustments={adjustments}
           onAdjustmentChange={setAdjustmentFor}
+          excludedQuestions={excludedQuestions}
+          onToggleExcluded={toggleQuestionExcluded}
           onClose={() => setShowPreview(false)}
         />
       )}

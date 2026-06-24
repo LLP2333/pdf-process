@@ -83,6 +83,7 @@
 3. **PDF 导出走矢量**:沿用 PyMuPDF 的 `show_pdf_page(target_rect, src_doc, page, clip=clip)`,公式 / 表格 / 图形 100% 保留原貌,一题一页,横版 A4,题区置顶居中。
 4. **自动去白边**:`auto_trim=true`(默认)时,对每段在 1x 灰度像素图上逐行扫描,找出首末非白行回算到 pt 坐标。同一开关同时作用于矢量 PDF 导出、PPTX 导出与预览,确保所见即所得。
 5. **二次裁剪 = 题目级别 `trim: {top, bottom}` 字段(后端在 `auto_trim` 之后单独应用,跨段级联)**:在预览弹窗中,每题可对"顶部/底部"再额外裁掉若干 pt。**前端不再 mutate segments 的 y 值,而是把 top/bottom 作为 `question.trim` 字段一起上传**;后端 `_normalize_segments` 先做完 `auto_trim` 像素扫描,**之后**再对第一/最后一段应用 trim,且当某端段被吃光时剩余量会**继续吃前/后相邻段**。这样可以避免"用户调的微调量 < 自动去白边量"时被吞掉,也能让跨页题用「底部再裁」从最后一段一路吃到第一页底部的页脚("第 1 页(共 2 页)")。Adjustment 以稳定的 question id(`${prevDivId}|${nextDivId}`)存放,分割线被删时孤儿 adjustment 会被自动清理。
+13. **逐题"是否导出"开关(前端纯本地状态,不进入后端契约)**:预览弹窗每张卡片头部一个复选框,默认勾选 = 导出;取消勾选 = 不导出,卡片整体灰显 + 显示"不导出"徽标。`App.excludedQuestions: Record<string, true>` **反向**记录被排除的题(以稳定 question.id 为 key),与 `adjustments` 共用孤儿清理 effect。`doExport` 先 `filter((q) => !excluded[q.id])` 再 `applyAdjustment` 再丢空段,最后 `map((q, idx) => ({...q, no: idx + 1}))` **重新连续编号**(避免后端按 `no` 排序后题号跳变);全部排除时按钮禁用 + 文字提示。这套机制留在前端是因为后端只需要"按 no 排序拿到一组要导出的题",不应当感知"原先有多少题、谁被跳过"。
 6. **PPTX 导出走栅格**:python-pptx 不支持直接嵌入 PDF;每段以 220 DPI 渲染为 PNG 再插入 16:9 幻灯片。讲解投影场景足够清晰,体积可控。
 7. **预览弹窗串行而非并行**:`PreviewModal` 用 200ms debounce + 串行调用 `/api/preview`,避免调滑块时把后端打趴;每次请求按 `fingerprint` 校验,过期响应丢弃。
 8. **无登录、无持久会话**:doc_id 即资源句柄,16 位小写 hex(`uuid4().hex[:16]`,64 bit 随机不可枚举),过期(默认 24h)自动清理,可通过 `EXAM_SPLITTER_RETENTION` 调整。
@@ -105,14 +106,14 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `App.tsx` | 顶层状态:`doc`、`dividers`、`autoTrim`、`margin`、`adjustments`、`showPreview`、`activeQuestionIndex`、`autoDetecting / autoDetectMessage` |
+| `App.tsx` | 顶层状态:`doc`、`dividers`、`autoTrim`、`margin`、`adjustments`、`excludedQuestions`、`showPreview`、`activeQuestionIndex`、`autoDetecting / autoDetectMessage` |
 | `dividers.ts` | 纯函数 `buildQuestionsFromDividers`(N 条 → N-1 道题)+ `applyAdjustmentToQuestion` |
 | `api.ts` | 唯一对接后端的位置,所有 fetch / 错误抽取在此 |
 | `UploadPanel` | 上传交互,无业务状态 |
 | `PdfPage` | 单页 PDF + Konva Stage 叠加:单击新建 / 拖动调整 / Shift单击+× 删除分割线 |
 | `QuestionList` | 左栏:派生题目列表(跨页提示 + 二次裁剪角标)+ 跳转 + 清空分割线 |
 | `ExportPanel` | 左栏顶部:「自动识别题号」按钮 + 结果提示 + 自动去白边 + 页边距 + 「预览裁剪效果」按钮 + 折叠左栏按钮 |
-| `PreviewModal` | 弹窗:逐题预览 + 顶部/底部再裁剪滑块 + 「确认并导出 PDF/PPTX」 |
+| `PreviewModal` | 弹窗:逐题预览 + 顶部/底部再裁剪滑块 + **每题"导出/不导出"复选框** + 「确认并导出 PDF/PPTX」 |
 
 ## 关键流程:自动识别题号
 
