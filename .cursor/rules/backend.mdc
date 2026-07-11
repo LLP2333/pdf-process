@@ -29,4 +29,4 @@ alwaysApply: false
 - 公共夹具放 `conftest.py`(已有 `sample_pdf` / `tmp_storage` / `client`)。
 - 接口测试用 `TestClient` 走完整链路,不要 mock `pdf_service`。
 - 文件名 `test_*.py`,用例描述用中文,清晰说明"在什么场景下,期望发生什么"。
-- 完成后必须跑通:`.venv/bin/pytest`,当前基线 22 passed。
+- 完成后必须跑通:`.venv/bin/pytest`,当前基线 61 passed。

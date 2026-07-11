@@ -10,8 +10,8 @@
 - `GET  /api/health`               健康检查
 - `POST /api/upload`               上传 PDF,返回 doc_id 与每页预览 PNG 的 URL / 尺寸
 - `GET  /api/pages/{doc_id}/{name}` 静态返回上一接口产生的预览 PNG
-- `POST /api/preview/{doc_id}`     单题实时预览(纵向拼接成单张 PNG)
-- `POST /api/export/{doc_id}`       按 {format, margin, auto_trim, questions} 矢量裁剪并下载产物
+- `POST /api/preview`              单题实时预览(区域自带 doc_id,可跨文档;纵向拼接成单张 PNG)
+- `POST /api/export`               按 {format, margin, auto_trim, footer_text, questions} 矢量裁剪并下载产物
 - `POST /api/auto_detect/{doc_id}`  判定文字版 / 扫描件,顺带尝试识别题号给出草稿分割线
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from . import pdf_service, ppt_service, storage
-from .schemas import AutoDetectResponse, ExportRequest, PreviewRequest, UploadResponse
+from .schemas import AutoDetectResponse, ExportRequest, PreviewRequest, Question, UploadResponse
 
 # doc_id 严格白名单:必须是 `new_doc_id()` 生成的 16 位小写 hex,任何其它形式一律按"未找到"处理。
 # 这样可以阻止 `../`、绝对路径、过长字符串等路径遍历尝试,
@@ -195,6 +195,20 @@ def _require_doc(doc_id: str) -> Path:
     return in_path
 
 
+def _collect_doc_paths(questions: list[Question]) -> dict[str, Path]:
+    """汇总切分方案里引用到的所有 doc_id,并逐个过 `_require_doc` 安全闸。
+
+    区域自带 doc_id(多文档组题),因此校验从"路由路径"下沉到"请求体"。
+    任一 doc_id 非法或已过期 → 404,错误信息不区分原因(与单文档时代一致)。
+    """
+    doc_paths: dict[str, Path] = {}
+    for question in questions:
+        for region in question.regions:
+            if region.doc_id not in doc_paths:
+                doc_paths[region.doc_id] = _require_doc(region.doc_id)
+    return doc_paths
+
+
 # 预览 PNG 文件名白名单,防止路径遍历(只允许 `page_数字.png`)。
 _NAME_RE = re.compile(r"^page_\d{3}\.png$")
 
@@ -215,23 +229,24 @@ def page_image(doc_id: str, name: str) -> FileResponse:
 
 
 @app.post(
-    "/api/preview/{doc_id}",
+    "/api/preview",
     summary="单题实时预览(返回 PNG)",
     description=(
-        "前端在 PDF 上调整分割线时,会以此接口拉取每道题的纵向拼接预览图。"
-        "请求体 `{question, auto_trim}`,响应 `image/png`,响应头 `X-Empty: 1` 标示该题无有效区域。"
+        "前端在画布上框选/调整题目区域时,会以此接口拉取每道题的纵向拼接预览图。"
+        "请求体 `{question, auto_trim}`;每个区域自带 `doc_id`,一道题可跨多份文档。"
+        "响应 `image/png`,响应头 `X-Empty: 1` 标示该题无有效区域。"
     ),
     responses={
         200: {"description": "返回预览 PNG"},
-        404: {"description": "doc_id 不存在或已过期"},
+        404: {"description": "任一 doc_id 不存在或已过期"},
     },
 )
-def preview(doc_id: str, payload: PreviewRequest) -> Response:
+def preview(payload: PreviewRequest) -> Response:
     """渲染单题预览。返回 1x1 透明 PNG 时附带 `X-Empty: 1`,前端据此显示空态。"""
-    in_path = _require_doc(doc_id)
+    doc_paths = _collect_doc_paths([payload.question])
     try:
         png = pdf_service.render_question_preview(
-            in_path, payload.question, auto_trim=payload.auto_trim
+            doc_paths, payload.question, auto_trim=payload.auto_trim
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"生成预览失败:{exc}") from exc
@@ -247,50 +262,69 @@ def preview(doc_id: str, payload: PreviewRequest) -> Response:
 
 
 @app.post(
-    "/api/export/{doc_id}",
+    "/api/export",
     summary="按切分方案导出 PDF / PPTX",
     description=(
-        "接收 `{format, margin, auto_trim, questions}`;`questions` 中每题的 `segments` 用 PDF "
-        "原始坐标(pt)给出 `(page, y1, y2)`,横向默认整页宽。"
-        "`auto_trim=true` 时,后端会在裁剪前对每段做像素扫描去掉上下白边。"
+        "接收 `{format, margin, auto_trim, footer_text, questions}`;`questions` 中每题由若干 "
+        "`Region` 组成,每个区域用 PDF 原始坐标(pt)给出 `(doc_id, page, x1, y1, x2, y2)`,"
+        "可跨页、跨栏、跨多份已上传的文档组合。"
+        "`auto_trim=true` 时,后端会在裁剪前对每个区域做像素扫描去掉四周白边;"
+        "`footer_text` 非空时在每页/每张幻灯片左下角加灰字署名,字号由 `footer_size`(6-24pt,默认 8)控制。"
         "返回:`application/pdf` 或 PPTX 二进制,响应头含 `X-Question-Count` "
         "标示成功生成的题目数,且 `Content-Disposition` 使用 RFC 5987 编码。"
     ),
     responses={
         200: {"description": "导出成功,返回文件流"},
-        404: {"description": "doc_id 不存在或已过期"},
+        404: {"description": "任一 doc_id 不存在或已过期"},
         422: {"description": "切分方案为空或无效"},
         500: {"description": "服务器内部异常"},
     },
 )
-def export(doc_id: str, payload: ExportRequest) -> FileResponse:
+def export(payload: ExportRequest) -> FileResponse:
     """根据用户给定的切分方案导出 PDF 或 PPTX。
 
     - `format == "pdf"`:走 PyMuPDF 的 `show_pdf_page(... clip=...)` 矢量裁剪,
       产物保留公式 / 表格 / 图形原貌,一题一页(横版 A4)。
-    - `format == "pptx"`:把每段以 220 DPI 渲染为 PNG 后插入 16:9 幻灯片,
+    - `format == "pptx"`:把每个区域以 220 DPI 渲染为 PNG 后插入 16:9 幻灯片,
       题区置顶居中,下方留白方便讲解书写。
-    - `auto_trim`:开启后逐段去除上下白边,题目内容会被放大到可用区,适合课堂投影。
-    - `made == 0` 视为「切分方案没有任何有效区域」(可能 y1==y2、page 越界),
+    - `auto_trim`:开启后逐区域去除四周白边,题目内容会被放大到可用区,适合课堂投影。
+    - `footer_text`:可选署名,每页左下角灰字;`footer_size` 控制字号(6-24pt)。
+    - `made == 0` 视为「切分方案没有任何有效区域」(可能宽/高不足 1pt、page 越界),
       返回 422 给前端提示。
+
+    产物固定落到"第一个被引用的 doc"的 outputs 目录下(仅作为磁盘位置,
+    不影响下载文件名),由 `storage.maintenance()` 统一按过期回收。
     """
-    in_path = _require_doc(doc_id)
+    doc_paths = _collect_doc_paths(payload.questions)
+    primary_doc_id = next(iter(doc_paths))
 
     if payload.format == "pdf":
-        out_path = storage.export_path(doc_id, "pdf")
+        out_path = storage.export_path(primary_doc_id, "pdf")
         try:
             made = pdf_service.build_pdf(
-                in_path, out_path, payload.questions, payload.margin, auto_trim=payload.auto_trim
+                doc_paths,
+                out_path,
+                payload.questions,
+                payload.margin,
+                auto_trim=payload.auto_trim,
+                footer_text=payload.footer_text,
+                footer_size=payload.footer_size,
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"导出 PDF 失败:{exc}") from exc
         media = "application/pdf"
         download = _download_name(payload.source_name, "pdf")
     else:
-        out_path = storage.export_path(doc_id, "pptx")
+        out_path = storage.export_path(primary_doc_id, "pptx")
         try:
             made = ppt_service.build_pptx(
-                in_path, out_path, payload.questions, payload.margin, auto_trim=payload.auto_trim
+                doc_paths,
+                out_path,
+                payload.questions,
+                payload.margin,
+                auto_trim=payload.auto_trim,
+                footer_text=payload.footer_text,
+                footer_size=payload.footer_size,
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"导出 PPTX 失败:{exc}") from exc
@@ -319,7 +353,7 @@ def export(doc_id: str, payload: ExportRequest) -> FileResponse:
     description=(
         "根据 PDF 的文字层做两件事:1) 判断是否文字版(扫描件 / 加密件没文字层时无法识别);"
         "2) 文字版时按「行首题号」(如 `1.`、`2、`、`3)`)推出每道题的上界,再补一条「末题下界」,"
-        "返回 N+1 条分割线,前端可直接替换当前画面上的分割线。"
+        "返回 N+1 条分割线,前端把相邻两条转换为整页宽的草稿题框供用户手动微调。"
         "扫描件 / 无题号匹配 / 题号链 < 2 时,`dividers` 返回空数组,`message` 给出中文提示。"
     ),
     responses={

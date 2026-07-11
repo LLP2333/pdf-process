@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import unquote
 
+import fitz
 from fastapi.testclient import TestClient
 
 
@@ -13,6 +14,26 @@ def _disposition_filename(resp) -> str:
     marker = "filename*=UTF-8''"
     assert marker in cd
     return unquote(cd.split(marker, 1)[1].split(";")[0])
+
+
+def _upload(client: TestClient, pdf_path: Path) -> str:
+    """上传一份 PDF 并返回 doc_id(断言 200)。"""
+    with pdf_path.open("rb") as fh:
+        resp = client.post(
+            "/api/upload",
+            files={"file": (pdf_path.name, fh.read(), "application/pdf")},
+        )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["doc_id"]
+
+
+def _question(doc_id: str, no: int = 1, page: int = 0, y1: float = 120, y2: float = 300,
+              x1: float = 0, x2: float = 595) -> dict:
+    """构造单区域 Question 请求体的快捷方式。"""
+    return {
+        "no": no,
+        "regions": [{"doc_id": doc_id, "page": page, "x1": x1, "y1": y1, "x2": x2, "y2": y2}],
+    }
 
 
 def test_health(client: TestClient) -> None:
@@ -70,16 +91,22 @@ def test_full_flow_upload_pages_export(client: TestClient, sample_pdf: Path) -> 
     # 3) bad image name 404
     assert client.get(f"/api/pages/{doc_id}/etc..passwd").status_code == 404
 
-    # 4) export pdf
+    # 4) export pdf(第二题跨页 + 限定 x 范围)
     payload = {
         "format": "pdf",
         "margin": 28,
         "questions": [
-            {"no": 1, "segments": [{"page": 0, "y1": 120, "y2": 300}]},
-            {"no": 2, "segments": [{"page": 0, "y1": 300, "y2": 500}, {"page": 1, "y1": 120, "y2": 240}]},
+            _question(doc_id, no=1, y1=120, y2=300),
+            {
+                "no": 2,
+                "regions": [
+                    {"doc_id": doc_id, "page": 0, "x1": 40, "y1": 300, "x2": 560, "y2": 500},
+                    {"doc_id": doc_id, "page": 1, "x1": 0, "y1": 120, "x2": 595, "y2": 240},
+                ],
+            },
         ],
     }
-    resp = client.post(f"/api/export/{doc_id}", json=payload)
+    resp = client.post("/api/export", json=payload)
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.headers["x-question-count"] == "2"
@@ -87,109 +114,171 @@ def test_full_flow_upload_pages_export(client: TestClient, sample_pdf: Path) -> 
 
     # 5) export pptx
     payload["format"] = "pptx"
-    resp = client.post(f"/api/export/{doc_id}", json=payload)
+    resp = client.post("/api/export", json=payload)
     assert resp.status_code == 200
     assert "presentationml" in resp.headers["content-type"]
     assert resp.headers["x-question-count"] == "2"
     assert len(resp.content) > 0
 
 
+def test_export_combines_two_documents(
+    client: TestClient, sample_pdf: Path, second_pdf: Path
+) -> None:
+    """多文档组题:同一道题引用两份已上传文档的区域,导出成功且两份内容都在。"""
+    doc_a = _upload(client, sample_pdf)
+    doc_b = _upload(client, second_pdf)
+
+    payload = {
+        "format": "pdf",
+        "margin": 28,
+        "auto_trim": False,
+        "questions": [
+            {
+                "no": 1,
+                "regions": [
+                    {"doc_id": doc_a, "page": 0, "x1": 0, "y1": 60, "x2": 595, "y2": 120},
+                    {"doc_id": doc_b, "page": 0, "x1": 0, "y1": 60, "x2": 595, "y2": 130},
+                ],
+            }
+        ],
+    }
+    resp = client.post("/api/export", json=payload)
+    assert resp.status_code == 200
+    assert resp.headers["x-question-count"] == "1"
+
+    out = fitz.open(stream=resp.content, filetype="pdf")
+    try:
+        text = out[0].get_text("text")
+    finally:
+        out.close()
+    assert "Page 1 Title" in text
+    assert "SECOND-DOC" in text
+
+
 def test_export_nonexistent_doc_returns_404(client: TestClient) -> None:
     payload = {
         "format": "pdf",
         "margin": 28,
-        "questions": [{"no": 1, "segments": [{"page": 0, "y1": 0, "y2": 10}]}],
+        "questions": [_question("deadbeefdeadbeef")],
     }
-    resp = client.post("/api/export/deadbeef", json=payload)
+    resp = client.post("/api/export", json=payload)
     assert resp.status_code == 404
 
 
-def test_export_all_invalid_segments_returns_422(client: TestClient, sample_pdf: Path) -> None:
-    with sample_pdf.open("rb") as fh:
-        resp = client.post(
-            "/api/upload",
-            files={"file": (sample_pdf.name, fh.read(), "application/pdf")},
-        )
-    doc_id = resp.json()["doc_id"]
-
+def test_export_rejects_when_any_region_doc_missing(
+    client: TestClient, sample_pdf: Path
+) -> None:
+    """反例:哪怕只有一个区域引用了不存在的 doc_id,也应整体 404(不产出半成品)。"""
+    doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
         "margin": 28,
-        "questions": [{"no": 1, "segments": [{"page": 99, "y1": 0, "y2": 10}]}],
+        "questions": [
+            _question(doc_id, no=1),
+            _question("deadbeefdeadbeef", no=2),
+        ],
     }
-    resp = client.post(f"/api/export/{doc_id}", json=payload)
+    resp = client.post("/api/export", json=payload)
+    assert resp.status_code == 404
+
+
+def test_export_all_invalid_regions_returns_422(client: TestClient, sample_pdf: Path) -> None:
+    doc_id = _upload(client, sample_pdf)
+    payload = {
+        "format": "pdf",
+        "margin": 28,
+        "questions": [_question(doc_id, page=99, y1=0, y2=10)],
+    }
+    resp = client.post("/api/export", json=payload)
+    assert resp.status_code == 422
+
+
+def test_export_footer_text_appears_in_pdf(client: TestClient, sample_pdf: Path) -> None:
+    """正例:footer_text 走完整 HTTP 链路后落在导出 PDF 的文字层里。"""
+    doc_id = _upload(client, sample_pdf)
+    payload = {
+        "format": "pdf",
+        "margin": 28,
+        "footer_text": "整理:王老师",
+        "questions": [_question(doc_id)],
+    }
+    resp = client.post("/api/export", json=payload)
+    assert resp.status_code == 200
+
+    out = fitz.open(stream=resp.content, filetype="pdf")
+    try:
+        assert "整理:王老师" in out[0].get_text("text")
+    finally:
+        out.close()
+
+
+def test_export_footer_text_too_long_rejected(client: TestClient, sample_pdf: Path) -> None:
+    """反例:footer_text 超 50 字符被 422 拒绝(Pydantic 校验)。"""
+    doc_id = _upload(client, sample_pdf)
+    payload = {
+        "format": "pdf",
+        "margin": 28,
+        "footer_text": "长" * 51,
+        "questions": [_question(doc_id)],
+    }
+    resp = client.post("/api/export", json=payload)
     assert resp.status_code == 422
 
 
 def test_export_uses_original_filename(client: TestClient, sample_pdf: Path) -> None:
     """正例:传了 source_name 时,下载名应为 `<去扩展名原名>_切割重组.<ext>`。"""
-    with sample_pdf.open("rb") as fh:
-        resp = client.post(
-            "/api/upload",
-            files={"file": (sample_pdf.name, fh.read(), "application/pdf")},
-        )
-    doc_id = resp.json()["doc_id"]
-
+    doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
         "margin": 28,
         "source_name": "2024期末数学.pdf",
-        "questions": [{"no": 1, "segments": [{"page": 0, "y1": 120, "y2": 300}]}],
+        "questions": [_question(doc_id)],
     }
-    resp = client.post(f"/api/export/{doc_id}", json=payload)
+    resp = client.post("/api/export", json=payload)
     assert resp.status_code == 200
     assert _disposition_filename(resp) == "2024期末数学_切割重组.pdf"
 
 
 def test_export_without_source_name_falls_back(client: TestClient, sample_pdf: Path) -> None:
     """反例:未传 source_name(或被清洗为空)时,回退到固定名 `试卷切割重组.<ext>`。"""
-    with sample_pdf.open("rb") as fh:
-        resp = client.post(
-            "/api/upload",
-            files={"file": (sample_pdf.name, fh.read(), "application/pdf")},
-        )
-    doc_id = resp.json()["doc_id"]
+    doc_id = _upload(client, sample_pdf)
 
     # 既测「完全不传」,也测「带路径遍历的非法名被清洗成空」两种回退路径
     for src in (None, "../../"):
         payload = {
             "format": "pptx",
             "margin": 28,
-            "questions": [{"no": 1, "segments": [{"page": 0, "y1": 120, "y2": 300}]}],
+            "questions": [_question(doc_id)],
         }
         if src is not None:
             payload["source_name"] = src
-        resp = client.post(f"/api/export/{doc_id}", json=payload)
+        resp = client.post("/api/export", json=payload)
         assert resp.status_code == 200
         assert _disposition_filename(resp) == "试卷切割重组.pptx"
 
 
 def test_preview_returns_png(client: TestClient, sample_pdf: Path) -> None:
-    with sample_pdf.open("rb") as fh:
-        up = client.post("/api/upload", files={"file": (sample_pdf.name, fh.read(), "application/pdf")})
-    doc_id = up.json()["doc_id"]
+    doc_id = _upload(client, sample_pdf)
 
     payload = {
-        "question": {"no": 1, "segments": [{"page": 0, "y1": 80, "y2": 400}]},
+        "question": _question(doc_id, y1=80, y2=400),
         "auto_trim": True,
     }
-    resp = client.post(f"/api/preview/{doc_id}", json=payload)
+    resp = client.post("/api/preview", json=payload)
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
     assert resp.headers.get("x-empty") is None
     assert resp.content.startswith(b"\x89PNG")
 
 
-def test_preview_empty_segments_returns_x_empty_header(client: TestClient, sample_pdf: Path) -> None:
-    with sample_pdf.open("rb") as fh:
-        up = client.post("/api/upload", files={"file": (sample_pdf.name, fh.read(), "application/pdf")})
-    doc_id = up.json()["doc_id"]
+def test_preview_empty_regions_returns_x_empty_header(client: TestClient, sample_pdf: Path) -> None:
+    doc_id = _upload(client, sample_pdf)
 
     payload = {
-        "question": {"no": 1, "segments": [{"page": 99, "y1": 0, "y2": 10}]},
+        "question": _question(doc_id, page=99, y1=0, y2=10),
         "auto_trim": True,
     }
-    resp = client.post(f"/api/preview/{doc_id}", json=payload)
+    resp = client.post("/api/preview", json=payload)
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
     assert resp.headers.get("x-empty") == "1"
@@ -197,24 +286,24 @@ def test_preview_empty_segments_returns_x_empty_header(client: TestClient, sampl
 
 def test_preview_nonexistent_doc_returns_404(client: TestClient) -> None:
     payload = {
-        "question": {"no": 1, "segments": [{"page": 0, "y1": 0, "y2": 10}]},
+        "question": _question("deadbeefdeadbeef"),
         "auto_trim": True,
     }
-    resp = client.post("/api/preview/deadbeef", json=payload)
+    resp = client.post("/api/preview", json=payload)
     assert resp.status_code == 404
 
 
 def test_invalid_doc_id_rejected_uniformly(client: TestClient) -> None:
-    """doc_id 必须是 16 位小写 hex,任何其他形式(含路径遍历尝试)统一 404。"""
-    # 长度不对 / 大写 / 含非 hex 字符
-    for bad in ["short", "DEADBEEFDEADBEEF", "z1234567890abcde", "1234567890abcde"]:
+    """区域里的 doc_id 必须是 16 位小写 hex,任何其他形式(含路径遍历尝试)统一 404。"""
+    # 长度不对 / 大写 / 含非 hex 字符 / 路径遍历
+    for bad in ["short", "DEADBEEFDEADBEEF", "z1234567890abcde", "1234567890abcde", "../etc"]:
         resp = client.post(
-            f"/api/preview/{bad}",
-            json={"question": {"no": 1, "segments": [{"page": 0, "y1": 0, "y2": 10}]}},
+            "/api/preview",
+            json={"question": _question(bad)},
         )
         assert resp.status_code == 404, f"bad doc_id {bad!r} should 404"
 
-    # 路径遍历尝试(都不该命中真实文件;统一 404)
+    # 页面图路由的路径遍历尝试(都不该命中真实文件;统一 404)
     for bad in ["..", "../etc", "%2e%2e"]:
         resp = client.get(f"/api/pages/{bad}/page_000.png")
         assert resp.status_code == 404
@@ -270,9 +359,7 @@ def test_upload_triggers_lru_when_over_storage_cap(
 
 def test_auto_detect_returns_dividers_for_text_pdf(client: TestClient, sample_pdf: Path) -> None:
     """sample_pdf 每页 6 道题,两页共 12 题(题号 1..12)→ 应返回 12+1 = 13 条分割线。"""
-    with sample_pdf.open("rb") as fh:
-        up = client.post("/api/upload", files={"file": (sample_pdf.name, fh.read(), "application/pdf")})
-    doc_id = up.json()["doc_id"]
+    doc_id = _upload(client, sample_pdf)
 
     resp = client.post(f"/api/auto_detect/{doc_id}")
     assert resp.status_code == 200
@@ -286,9 +373,7 @@ def test_auto_detect_returns_dividers_for_text_pdf(client: TestClient, sample_pd
 
 def test_auto_detect_reports_scan_pdf(client: TestClient, scan_pdf: Path) -> None:
     """扫描件:返回 is_text=False + 空 dividers + 中文提示。"""
-    with scan_pdf.open("rb") as fh:
-        up = client.post("/api/upload", files={"file": (scan_pdf.name, fh.read(), "application/pdf")})
-    doc_id = up.json()["doc_id"]
+    doc_id = _upload(client, scan_pdf)
 
     resp = client.post(f"/api/auto_detect/{doc_id}")
     assert resp.status_code == 200

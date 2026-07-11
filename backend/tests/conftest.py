@@ -46,6 +46,19 @@ def sample_pdf(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def second_pdf(tmp_path: Path) -> Path:
+    """另一份单页 PDF,带独特文字标记,用于多文档组题(跨卷取区域)测试。"""
+    pdf_path = tmp_path / "second.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "SECOND-DOC unique marker", fontsize=16)
+    page.draw_rect(fitz.Rect(72, 130, 400, 220), color=(0.5, 0.5, 0.5))
+    doc.save(pdf_path.as_posix())
+    doc.close()
+    return pdf_path
+
+
+@pytest.fixture
 def scan_pdf(tmp_path: Path) -> Path:
     """伪造"扫描件":每页只填一张大灰矩形,几乎无可提取文字层。
 

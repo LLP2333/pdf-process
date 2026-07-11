@@ -1,12 +1,12 @@
 """PDF 渲染与按用户切分方案重组导出。
 
-- `render_preview()`:把 PDF 的每页渲染成 PNG,供前端在画布上预览/画线。
-- `build_pdf()`:按前端提交的题目-段落方案,矢量裁剪并贴到横版 A4 上,
+- `render_preview()`:把 PDF 的每页渲染成 PNG,供前端在画布上框选题目区域。
+- `build_pdf()`:按前端提交的题目-区域方案,矢量裁剪并贴到横版 A4 上,
   一题一页。沿用项目原始思路:`show_pdf_page(target, doc, page, clip=clip)`,
-  公式 / 表格 / 图形 100% 保留原貌。
-- `render_question_preview()`:把一道题(可能跨页)纵向拼接成单张 PNG,供前端实时预览。
+  公式 / 表格 / 图形 100% 保留原貌。区域可来自多份文档(跨卷组题)。
+- `render_question_preview()`:把一道题(可能跨页/跨文档)纵向拼接成单张 PNG,供前端实时预览。
 - `detect_text_layer()` / `auto_detect_dividers()`:基于 PDF 文字层做"扫描件 vs
-  文字版"判定,并尝试识别行首题号给出分割线建议。
+  文字版"判定,并尝试识别行首题号给出分割线建议(前端转成草稿题框)。
 """
 from __future__ import annotations
 
@@ -18,9 +18,19 @@ import fitz  # PyMuPDF
 
 from .schemas import DividerSuggestion, PageInfo, Question
 
-PREVIEW_DPI = 144  # PDF 原始 72dpi → 2 倍清晰度,够画线交互
+# PDF 原始 72dpi → 约 2.7 倍清晰度。画布支持放大到 200%,144dpi 底图会糊,
+# 192dpi 在清晰度与 PNG 体积之间取平衡(A4 宽 ≈ 1587px)。
+PREVIEW_DPI = 192
 TRIM_WHITE_THRESHOLD = 250  # 像素灰度 ≥ 阈值视为白色,反之视为有内容
 TRIM_PADDING_PT = 2.0  # 自动去白边后向外补的安全边距(pt)
+
+# 页脚署名的排版常量:左下角灰字,固定贴着纸面左下角(不随 margin 变化,
+# 因为题区置顶排布,底部天然留白,固定位置能保证多页产物署名整齐一致)。
+# 字号由请求的 footer_size 控制(6-24pt,默认 8)。
+FOOTER_DEFAULT_FONT_SIZE = 8.0
+FOOTER_MARGIN_X = 18.0
+FOOTER_BASELINE_FROM_BOTTOM = 12.0
+FOOTER_COLOR = (0.55, 0.55, 0.55)
 
 # "可提取字符 / 页"低于此阈值,视为扫描件(没文字层或文字层稀疏到没意义)。
 # 经验值:正常文字版试卷每页文字数都在数百以上,扫描件通常只有零星 OCR 残片(< 10)。
@@ -43,6 +53,27 @@ _AUTO_DIVIDER_BOTTOM_PADDING = 6.0
 def open_doc(pdf_path: Path) -> fitz.Document:
     """打开 PDF 文档。封装一层方便测试 mock 与未来切换其它后端。"""
     return fitz.open(pdf_path)
+
+
+def _open_all(doc_paths: dict[str, Path]) -> dict[str, fitz.Document]:
+    """按 doc_id 批量打开多份源 PDF;任一失败时回滚关闭已打开的,避免句柄泄漏。"""
+    docs: dict[str, fitz.Document] = {}
+    try:
+        for doc_id, path in doc_paths.items():
+            docs[doc_id] = open_doc(path)
+    except Exception:
+        _close_all(docs)
+        raise
+    return docs
+
+
+def _close_all(docs: dict[str, fitz.Document]) -> None:
+    """关闭 `_open_all` 打开的所有文档(单个 close 失败不影响其余)。"""
+    for doc in docs.values():
+        try:
+            doc.close()
+        except Exception:  # noqa: BLE001 - 关闭失败无补救手段,继续关剩下的
+            pass
 
 
 def render_preview(pdf_path: Path, image_dir: Path, image_url_prefix: str) -> list[PageInfo]:
@@ -83,156 +114,161 @@ def render_preview(pdf_path: Path, image_dir: Path, image_url_prefix: str) -> li
     return pages
 
 
-def _content_y_range(page: fitz.Page, clip: fitz.Rect) -> tuple[float, float]:
-    """在给定 `clip` 内扫描像素,返回有内容的纵向 `(y0, y1)`(PDF pt 坐标)。
+def _content_bbox(page: fitz.Page, clip: fitz.Rect) -> fitz.Rect:
+    """在给定 `clip` 内扫描像素,返回有内容的最小包围盒(PDF pt 坐标)。
 
-    思路:用 1x zoom 灰度渲染 `clip` 区域;逐行用 `min(bytes_row)` 判定该行最深的像素
-    是否低于 `TRIM_WHITE_THRESHOLD`;首末有内容行 → 回算到 pt 坐标。
-    Why 取灰度而非 RGB:单通道字节流更便宜,`min()` 走 C 实现也足够快。
+    思路:用 1x zoom 灰度渲染 `clip` 区域;把"深于阈值"的像素置 255、其余置 0,
+    借 PIL 的 `getbbox()`(C 实现)一次拿到 x/y 两个方向的内容边界,再回算到 pt。
+    Why 双向:框选模型下用户可能框住半栏文字,横向白边同样需要收紧,
+    这样导出时内容才能放到最大。
     若 clip 为空 / 全白,直接返回原范围,避免误伤。
     """
+    from PIL import Image  # 局部导入:Pillow 经由 python-pptx 引入,避免顶层硬依赖
+
     if clip.height < 1 or clip.width < 1:
-        return clip.y0, clip.y1
+        return fitz.Rect(clip)
     matrix = fitz.Matrix(1.0, 1.0)
+    mode = "L"
     try:
         pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False, colorspace=fitz.csGRAY)
     except Exception:  # noqa: BLE001 - 极少数 PyMuPDF 版本不识别灰度常量;退回 RGB
         pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False)
-    w, h = pix.width, pix.height
-    if w == 0 or h == 0:
-        return clip.y0, clip.y1
-    samples = pix.samples
-    channels = pix.n
-    top: int | None = None
-    bottom: int | None = None
-    stride = w * channels
-    for y in range(h):
-        row = samples[y * stride : (y + 1) * stride]
-        # 灰度直接 min;RGB 同时考察三通道(只要任一通道偏暗即视为有内容)
-        if min(row) < TRIM_WHITE_THRESHOLD:
-            if top is None:
-                top = y
-            bottom = y
-    if top is None or bottom is None:
-        return clip.y0, clip.y1
-    y_per_pixel = clip.height / h
+        mode = "RGB"
+    if pix.width == 0 or pix.height == 0:
+        return fitz.Rect(clip)
+    img = Image.frombuffer(mode, (pix.width, pix.height), pix.samples, "raw", mode, pix.stride, 1)
+    if mode != "L":
+        img = img.convert("L")
+    mask = img.point(lambda v: 255 if v < TRIM_WHITE_THRESHOLD else 0)
+    bbox = mask.getbbox()
+    if bbox is None:
+        return fitz.Rect(clip)
+    left, top, right, bottom = bbox  # 右/下为开区间像素坐标
+    x_per_pixel = clip.width / pix.width
+    y_per_pixel = clip.height / pix.height
+    x0 = clip.x0 + left * x_per_pixel - TRIM_PADDING_PT
     y0 = clip.y0 + top * y_per_pixel - TRIM_PADDING_PT
-    y1 = clip.y0 + (bottom + 1) * y_per_pixel + TRIM_PADDING_PT
-    return max(clip.y0, y0), min(clip.y1, y1)
+    x1 = clip.x0 + right * x_per_pixel + TRIM_PADDING_PT
+    y1 = clip.y0 + bottom * y_per_pixel + TRIM_PADDING_PT
+    return fitz.Rect(
+        max(clip.x0, x0),
+        max(clip.y0, y0),
+        min(clip.x1, x1),
+        min(clip.y1, y1),
+    )
 
 
-def _normalize_segments(
+def _normalize_regions(
     question: Question,
-    doc: fitz.Document,
+    docs: dict[str, fitz.Document],
     auto_trim: bool = False,
-) -> list[tuple[int, fitz.Rect]]:
-    """把用户给的 `(page, y1, y2)` 规范化为页内 `fitz.Rect`。
+) -> list[tuple[str, int, fitz.Rect]]:
+    """把用户给的 `(doc_id, page, x1, y1, x2, y2)` 规范化为可直接裁剪的矩形列表。
 
     流程:
-    1. 自动 `min/max` 以兼容 `y1 > y2` 的输入;
-    2. 越界(`page` 不在 `[0, page_count)`)或高度 < 1 的段直接丢弃;
-    3. 横向恒取整页宽(本期需求只画水平线);
-    4. `auto_trim=True` 时,对每段额外做一次"像素扫描去白边",
-       让导出的题目紧贴有内容的最小包围盒;
-    5. 若 `question.trim` 不为空,**在去白边之后**再应用题目级 trim
-       —— `top` 收第一段上界,`bottom` 收最后一段下界。这一步必须放在最后,
-       否则 `auto_trim` 会"吞掉"小于自动收紧量的 top/bottom,导致用户微调失效。
-    """
-    out: list[tuple[int, fitz.Rect]] = []
-    for seg in question.segments:
-        if seg.page < 0 or seg.page >= doc.page_count:
-            continue
-        page = doc[seg.page]
-        pr = page.rect
-        y0 = max(pr.y0, min(seg.y1, seg.y2))
-        y1 = min(pr.y1, max(seg.y1, seg.y2))
-        if y1 - y0 < 1:
-            continue
-        rect = fitz.Rect(pr.x0, y0, pr.x1, y1)
-        if auto_trim:
-            ty0, ty1 = _content_y_range(page, rect)
-            if ty1 - ty0 >= 1:
-                rect = fitz.Rect(pr.x0, ty0, pr.x1, ty1)
-        out.append((seg.page, rect))
+    1. `doc_id` 不在 `docs` 里(理论上路由层已校验,防御性兜底)→ 丢弃;
+    2. 自动 `min/max` 以兼容任意对角线画框顺序;
+    3. 越界(`page` 不在 `[0, page_count)`)或宽/高 < 1pt 的区域直接丢弃;
+    4. 坐标按页面边界 clamp;
+    5. `auto_trim=True` 时,对每个区域做"像素扫描去白边"(x/y 双向),
+       让导出的题目紧贴有内容的最小包围盒。
 
-    trim = question.trim
-    if out and trim is not None:
-        # 让 trim 跨段级联:吃完当前端段后,把剩余量继续应用到相邻段。
-        # 这是为了支持用户的真实诉求 —— 比如题目跨两页时,
-        # 用「底部再裁」从第二页一直吃到第一页底部的页码("第1页(共2页)")。
-        # 没有这个级联,bottom 调到把 segments[-1] 裁没就停了,前面那段动不了。
-        if trim.top > 0:
-            remain = trim.top
-            while out and remain > 0:
-                pno, rect = out[0]
-                h = rect.y1 - rect.y0
-                if remain >= h - 1:
-                    remain -= h
-                    out.pop(0)
-                else:
-                    out[0] = (pno, fitz.Rect(rect.x0, rect.y0 + remain, rect.x1, rect.y1))
-                    remain = 0
-        if out and trim.bottom > 0:
-            remain = trim.bottom
-            while out and remain > 0:
-                pno, rect = out[-1]
-                h = rect.y1 - rect.y0
-                if remain >= h - 1:
-                    remain -= h
-                    out.pop()
-                else:
-                    out[-1] = (pno, fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 - remain))
-                    remain = 0
+    Returns:
+        `(doc_id, page_index, rect)` 元组列表,顺序与 `question.regions` 一致。
+    """
+    out: list[tuple[str, int, fitz.Rect]] = []
+    for region in question.regions:
+        doc = docs.get(region.doc_id)
+        if doc is None:
+            continue
+        if region.page < 0 or region.page >= doc.page_count:
+            continue
+        page = doc[region.page]
+        pr = page.rect
+        x0 = max(pr.x0, min(region.x1, region.x2))
+        x1 = min(pr.x1, max(region.x1, region.x2))
+        y0 = max(pr.y0, min(region.y1, region.y2))
+        y1 = min(pr.y1, max(region.y1, region.y2))
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            continue
+        rect = fitz.Rect(x0, y0, x1, y1)
+        if auto_trim:
+            tightened = _content_bbox(page, rect)
+            if tightened.width >= 1 and tightened.height >= 1:
+                rect = tightened
+        out.append((region.doc_id, region.page, rect))
     return out
 
 
+def _draw_pdf_footer(page: fitz.Page, text: str, font_size: float = FOOTER_DEFAULT_FONT_SIZE) -> None:
+    """在页面左下角画一行灰字署名(字号可调)。
+
+    Why 用内置 CJK 字体 `china-s`:默认 `helv` 不含中文字形,中文署名会变乱码;
+    `china-s` 是 PyMuPDF 自带的 CID 字体,无需外部字体文件即可覆盖中日韩 + ASCII。
+    基线固定在离页底 12pt 处:字号变大时向上生长,不会撞到纸面下缘。
+    """
+    page.insert_text(
+        fitz.Point(FOOTER_MARGIN_X, page.rect.height - FOOTER_BASELINE_FROM_BOTTOM),
+        text,
+        fontsize=font_size,
+        fontname="china-s",
+        color=FOOTER_COLOR,
+    )
+
+
 def build_pdf(
-    pdf_path: Path,
+    doc_paths: dict[str, Path],
     out_path: Path,
     questions: list[Question],
     margin: float,
     auto_trim: bool = True,
+    footer_text: str | None = None,
+    footer_size: float = FOOTER_DEFAULT_FONT_SIZE,
 ) -> int:
-    """根据用户给的切分方案,生成一题一页的横版 A4 PDF。
+    """根据用户给的切分方案,生成一题一页的横版 A4 PDF(区域可来自多份文档)。
 
-    实现思路:对每题先把所有段并到「共同宽度 + 总高度」,
-    再按等比缩放贴到 A4 横版可用区里(题区置顶居中,下方留白)。
-    使用 `page.show_pdf_page(target, src, page, clip=clip)` 做矢量裁剪,
-    公式 / 表格 / 图形 100% 保留。
+    实现思路:对每题先把所有区域并到「最大宽度 + 总高度」,按等比缩放贴到
+    A4 横版可用区里;每个区域**各自水平居中**(窄区域不再左贴齐),
+    题区整体置顶,下方留白。使用 `page.show_pdf_page(target, src, page, clip=clip)`
+    做矢量裁剪,公式 / 表格 / 图形 100% 保留。
 
     Args:
-        auto_trim: 若 True,在裁剪前对每段做一次"像素扫描去白边",
-            让题目内容更紧凑、放大后更易看清。
+        doc_paths: `doc_id -> 源 PDF 路径`,支持一次导出引用多份文档。
+        auto_trim: 若 True,在裁剪前对每个区域做"像素扫描去白边"(x/y 双向)。
+        footer_text: 可选页脚署名,每页左下角灰字。
+        footer_size: 署名字号(pt),仅在 footer_text 非空时使用。
 
     Returns:
-        实际写入的题目数(过滤掉空段的题目后)。
+        实际写入的题目数(过滤掉空区域的题目后)。
     """
-    doc = open_doc(pdf_path)
+    docs = _open_all(doc_paths)
     out = fitz.open()
     try:
         page_rect = fitz.paper_rect("a4-l")
-        W, H = page_rect.width, page_rect.height
-        avail_w = W - 2 * margin
-        avail_h = H - 2 * margin
+        page_width, page_height = page_rect.width, page_rect.height
+        avail_w = page_width - 2 * margin
+        avail_h = page_height - 2 * margin
         made = 0
         for q in sorted(questions, key=lambda x: x.no):
-            segs = _normalize_segments(q, doc, auto_trim=auto_trim)
-            if not segs:
+            regions = _normalize_regions(q, docs, auto_trim=auto_trim)
+            if not regions:
                 continue
-            common_w = max(r.width for _, r in segs)
-            total_h = sum(r.height for _, r in segs)
+            common_w = max(rect.width for _, _, rect in regions)
+            total_h = sum(rect.height for _, _, rect in regions)
             if common_w <= 0 or total_h <= 0:
                 continue
             scale = min(avail_w / common_w, avail_h / total_h)
-            page = out.new_page(width=W, height=H)
-            x_left = margin + (avail_w - common_w * scale) / 2
+            page = out.new_page(width=page_width, height=page_height)
             y = margin
-            for pno, clip in segs:
+            for doc_id, pno, clip in regions:
                 tw = clip.width * scale
                 th = clip.height * scale
+                x_left = margin + (avail_w - tw) / 2
                 target = fitz.Rect(x_left, y, x_left + tw, y + th)
-                page.show_pdf_page(target, doc, pno, clip=clip)
+                page.show_pdf_page(target, docs[doc_id], pno, clip=clip)
                 y += th
+            if footer_text:
+                _draw_pdf_footer(page, footer_text, font_size=footer_size)
             made += 1
         if made == 0:
             # PyMuPDF 不支持保存 0 页 PDF;此时把决定权交给上层(返回 422)
@@ -241,58 +277,58 @@ def build_pdf(
         return made
     finally:
         out.close()
-        doc.close()
+        _close_all(docs)
 
 
-def render_segments_to_png(
-    pdf_path: Path,
+def render_regions_to_png(
+    doc_paths: dict[str, Path],
     question: Question,
     dpi: int = 220,
     auto_trim: bool = True,
 ) -> list[bytes]:
-    """把一道题的每段裁剪渲染为 PNG 字节流,供 PPTX 插入图片使用。
+    """把一道题的每个区域裁剪渲染为 PNG 字节流,供 PPTX 插入图片使用。
 
     DPI 默认 220:在保持文字清晰的同时控制单题 PNG 大小,
     课堂投影场景完全够用。需要更高清可调高(注意 PPTX 体积线性增长)。
-    `auto_trim=True` 时与 `build_pdf` 保持一致行为:每段贴紧内容包围盒。
+    `auto_trim=True` 时与 `build_pdf` 保持一致行为:每个区域贴紧内容包围盒。
     """
     images: list[bytes] = []
-    doc = open_doc(pdf_path)
+    docs = _open_all(doc_paths)
     try:
         zoom = dpi / 72.0
         matrix = fitz.Matrix(zoom, zoom)
-        for pno, clip in _normalize_segments(question, doc, auto_trim=auto_trim):
-            pix = doc[pno].get_pixmap(matrix=matrix, clip=clip, alpha=False)
+        for doc_id, pno, clip in _normalize_regions(question, docs, auto_trim=auto_trim):
+            pix = docs[doc_id][pno].get_pixmap(matrix=matrix, clip=clip, alpha=False)
             images.append(pix.tobytes("png"))
     finally:
-        doc.close()
+        _close_all(docs)
     return images
 
 
 def render_question_preview(
-    pdf_path: Path,
+    doc_paths: dict[str, Path],
     question: Question,
     auto_trim: bool = True,
     dpi: int = 110,
 ) -> bytes | None:
-    """把一道题的所有段纵向拼接为单张 PNG,供前端右侧实时预览。
+    """把一道题的所有区域纵向拼接为单张 PNG,供前端题目面板实时预览。
 
-    多段拼接策略:以最大段宽为画布宽,逐段在水平方向居中粘贴;
-    若该题无任何有效段(全越界 / 全空高 / 去白边后归零)返回 None。
+    多区域拼接策略:以最大区域宽为画布宽,逐段在水平方向居中粘贴;
+    若该题无任何有效区域(全越界 / 全空 / 去白边后归零)返回 None。
     DPI 默认 110:预览质量足够分辨字形,又能压住单张图的体积。
     """
     from PIL import Image  # 局部导入避免顶层依赖泄漏
 
-    doc = open_doc(pdf_path)
+    docs = _open_all(doc_paths)
     try:
-        segs = _normalize_segments(question, doc, auto_trim=auto_trim)
-        if not segs:
+        regions = _normalize_regions(question, docs, auto_trim=auto_trim)
+        if not regions:
             return None
         zoom = dpi / 72.0
         matrix = fitz.Matrix(zoom, zoom)
         tiles: list[Image.Image] = []
-        for pno, clip in segs:
-            pix = doc[pno].get_pixmap(matrix=matrix, clip=clip, alpha=False)
+        for doc_id, pno, clip in regions:
+            pix = docs[doc_id][pno].get_pixmap(matrix=matrix, clip=clip, alpha=False)
             tiles.append(Image.open(BytesIO(pix.tobytes("png"))).convert("RGB"))
         if not tiles:
             return None
@@ -308,7 +344,7 @@ def render_question_preview(
         canvas.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
     finally:
-        doc.close()
+        _close_all(docs)
 
 
 def detect_text_layer(pdf_path: Path) -> tuple[bool, int, int]:
@@ -422,9 +458,10 @@ def auto_detect_dividers(pdf_path: Path) -> list[DividerSuggestion]:
     2. 用最长"差为 1"递增链挑出真正的题号序列(过滤选项里的 1./2. 与页码);
     3. 链上每个题号上方 6pt 各画一条分割线作为"题目上界";
     4. **额外补一条"末题下界"**:放在链中最后一个题号所在页的底部 -6pt,
-       让 N 个题号刚好切出 N 道题(否则按"两线之间一题"会少最后一题)。
+       让 N 个题号刚好切出 N 道题;不放到文档末页是为了避免误把
+       "参考答案 / 答题卡"卷入最后一题。
 
-    返回的 list 已按 (page, y) 排序;前端可直接为每条赋一个稳定 id。
+    返回的 list 已按 (page, y) 排序;前端把相邻两条转换成整页宽的草稿题框。
     """
     doc = open_doc(pdf_path)
     try:

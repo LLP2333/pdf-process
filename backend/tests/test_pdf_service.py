@@ -1,4 +1,4 @@
-"""pdf_service:预览渲染 + 矢量裁剪 PDF 导出。"""
+"""pdf_service:预览渲染 + 矢量裁剪 PDF 导出(矩形区域 + 多文档)。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +7,22 @@ import fitz
 import pytest
 
 from app import pdf_service
-from app.schemas import Question, QuestionTrim, Segment
+from app.schemas import Question, Region
+
+DOC_A = "aaaaaaaaaaaaaaaa"
+DOC_B = "bbbbbbbbbbbbbbbb"
+
+
+def _region(
+    page: int,
+    y1: float,
+    y2: float,
+    x1: float = 0,
+    x2: float = 595,
+    doc_id: str = DOC_A,
+) -> Region:
+    """构造 Region 的快捷方式;默认整页宽 + DOC_A,便于逐字段覆盖。"""
+    return Region(doc_id=doc_id, page=page, x1=x1, y1=y1, x2=x2, y2=y2)
 
 
 def test_render_preview_outputs_png_per_page(sample_pdf: Path, tmp_path: Path) -> None:
@@ -25,10 +40,10 @@ def test_render_preview_outputs_png_per_page(sample_pdf: Path, tmp_path: Path) -
 def test_build_pdf_creates_one_page_per_question(sample_pdf: Path, tmp_path: Path) -> None:
     out = tmp_path / "out.pdf"
     questions = [
-        Question(no=1, segments=[Segment(page=0, y1=120, y2=300)]),
-        Question(no=2, segments=[Segment(page=0, y1=300, y2=500), Segment(page=1, y1=120, y2=240)]),
+        Question(no=1, regions=[_region(0, 120, 300)]),
+        Question(no=2, regions=[_region(0, 300, 500), _region(1, 120, 240)]),
     ]
-    made = pdf_service.build_pdf(sample_pdf, out, questions, margin=28.0)
+    made = pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, margin=28.0)
 
     assert made == 2
     assert out.exists()
@@ -42,220 +57,225 @@ def test_build_pdf_creates_one_page_per_question(sample_pdf: Path, tmp_path: Pat
         doc.close()
 
 
-def test_build_pdf_ignores_empty_segments(sample_pdf: Path, tmp_path: Path) -> None:
-    """y1 == y2 视为空段;page 越界也应被丢弃。"""
+def test_build_pdf_ignores_empty_regions(sample_pdf: Path, tmp_path: Path) -> None:
+    """高度 < 1pt 视为空区域;page 越界、doc_id 未知也应被丢弃。"""
     out = tmp_path / "out.pdf"
     questions = [
-        Question(no=1, segments=[Segment(page=0, y1=200, y2=200)]),  # 空高
-        Question(no=2, segments=[Segment(page=99, y1=10, y2=20)]),  # 越界
-        Question(no=3, segments=[Segment(page=0, y1=100, y2=200)]),  # 正常
+        Question(no=1, regions=[_region(0, 200, 200)]),  # 空高
+        Question(no=2, regions=[_region(99, 10, 20)]),  # page 越界
+        Question(no=3, regions=[_region(0, 10, 20, doc_id="ffffffffffffffff")]),  # doc 未知
+        Question(no=4, regions=[_region(0, 100, 200)]),  # 正常
     ]
-    made = pdf_service.build_pdf(sample_pdf, out, questions, margin=28.0)
+    made = pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, margin=28.0)
     assert made == 1
 
 
-def test_normalize_swaps_y1_y2(sample_pdf: Path) -> None:
-    """允许用户传 y1 > y2,内部应自动 swap。"""
+def test_build_pdf_combines_regions_from_two_docs(
+    sample_pdf: Path, second_pdf: Path, tmp_path: Path
+) -> None:
+    """多文档组题:一道题引用两份文档的区域,输出单页应同时含两份文档的文字。"""
+    out = tmp_path / "out.pdf"
+    questions = [
+        Question(
+            no=1,
+            regions=[
+                _region(0, 60, 120, doc_id=DOC_A),  # sample_pdf 首行标题区域
+                _region(0, 60, 130, doc_id=DOC_B),  # second_pdf 标记文字区域
+            ],
+        ),
+    ]
+    made = pdf_service.build_pdf(
+        {DOC_A: sample_pdf, DOC_B: second_pdf}, out, questions, margin=28.0, auto_trim=False
+    )
+    assert made == 1
+
+    doc = fitz.open(out.as_posix())
+    try:
+        text = doc[0].get_text("text")
+    finally:
+        doc.close()
+    assert "Page 1 Title" in text, "应包含第一份文档的文字"
+    assert "SECOND-DOC" in text, "应包含第二份文档的文字"
+
+
+def test_normalize_swaps_diagonal_coordinates(sample_pdf: Path) -> None:
+    """允许用户从任意对角画框(x1>x2、y1>y2),内部应自动 swap。"""
     doc = fitz.open(sample_pdf.as_posix())
     try:
-        q = Question(no=1, segments=[Segment(page=0, y1=300, y2=100)])
-        normalized = pdf_service._normalize_segments(q, doc)
+        q = Question(no=1, regions=[_region(0, 300, 100, x1=400, x2=80)])
+        normalized = pdf_service._normalize_regions(q, {DOC_A: doc})
     finally:
         doc.close()
 
     assert len(normalized) == 1
-    _, rect = normalized[0]
+    _, _, rect = normalized[0]
+    assert rect.x0 == 80
+    assert rect.x1 == 400
     assert rect.y0 == 100
     assert rect.y1 == 300
 
 
-def test_render_segments_to_png_returns_bytes(sample_pdf: Path) -> None:
-    q = Question(no=1, segments=[Segment(page=0, y1=100, y2=300), Segment(page=1, y1=100, y2=200)])
-    pngs = pdf_service.render_segments_to_png(sample_pdf, q)
+def test_normalize_clamps_to_page_bounds(sample_pdf: Path) -> None:
+    """超出页面(x2/y2 越过右/下边界)的坐标应被 clamp 而不是判无效。"""
+    doc = fitz.open(sample_pdf.as_posix())
+    try:
+        page_rect = doc[0].rect
+        q = Question(no=1, regions=[_region(0, 700, 9000, x1=100, x2=9000)])
+        normalized = pdf_service._normalize_regions(q, {DOC_A: doc})
+    finally:
+        doc.close()
+
+    assert len(normalized) == 1
+    _, _, rect = normalized[0]
+    assert rect.x1 == page_rect.x1
+    assert rect.y1 == page_rect.y1
+
+
+def test_render_regions_to_png_returns_bytes(sample_pdf: Path) -> None:
+    q = Question(no=1, regions=[_region(0, 100, 300), _region(1, 100, 200)])
+    pngs = pdf_service.render_regions_to_png({DOC_A: sample_pdf}, q)
 
     assert len(pngs) == 2
     for b in pngs:
         assert b.startswith(b"\x89PNG\r\n\x1a\n"), "应为 PNG 字节流"
 
 
-def test_auto_trim_shrinks_segment_to_content(sample_pdf: Path) -> None:
-    """auto_trim=True 时,即便用户把整页都框进去,实际裁剪框也会贴紧内容上下界。"""
+def test_auto_trim_shrinks_region_in_both_directions(sample_pdf: Path) -> None:
+    """auto_trim=True 时,把整页框进去也会贴紧内容包围盒 —— 纵向与横向都收紧。
+
+    sample_pdf 的内容横向在 72..520pt 之间,纵向从 80pt 起,
+    因此四个方向都应严格向内收。
+    """
     doc = fitz.open(sample_pdf.as_posix())
     try:
-        page_height = doc[0].rect.height
-        # 圈一个把首行文字也包进去的大范围 (页面里文字从 y=80 开始)
-        q = Question(no=1, segments=[Segment(page=0, y1=0, y2=page_height)])
-        raw = pdf_service._normalize_segments(q, doc, auto_trim=False)
-        trimmed = pdf_service._normalize_segments(q, doc, auto_trim=True)
+        page_rect = doc[0].rect
+        q = Question(no=1, regions=[_region(0, 0, page_rect.height, x1=0, x2=page_rect.width)])
+        raw = pdf_service._normalize_regions(q, {DOC_A: doc}, auto_trim=False)
+        trimmed = pdf_service._normalize_regions(q, {DOC_A: doc}, auto_trim=True)
     finally:
         doc.close()
 
     assert len(raw) == 1 and len(trimmed) == 1
-    raw_rect = raw[0][1]
-    trim_rect = trimmed[0][1]
-    # 去白边后高度严格变小,且内容包围盒上下被收紧
+    raw_rect = raw[0][2]
+    trim_rect = trimmed[0][2]
     assert trim_rect.height < raw_rect.height
+    assert trim_rect.width < raw_rect.width
     assert trim_rect.y0 > raw_rect.y0
     assert trim_rect.y1 < raw_rect.y1
+    assert trim_rect.x0 > raw_rect.x0
+    assert trim_rect.x1 < raw_rect.x1
+    # 内容起点约在 (72, 80),留 2pt 安全边距后应落在其附近
+    assert trim_rect.x0 == pytest.approx(70, abs=6)
+    assert trim_rect.y0 == pytest.approx(66, abs=12)
 
 
-def test_auto_trim_keeps_clip_when_all_white(sample_pdf: Path) -> None:
-    """全白区域去白边会得到 (y0,y1) == 原范围,避免把空白题整没。"""
+def test_content_bbox_keeps_clip_when_all_white(sample_pdf: Path) -> None:
+    """反例:全白区域去白边应返回原 clip,避免把空白题整没。"""
     doc = fitz.open(sample_pdf.as_posix())
     try:
-        # sample_pdf 顶部 0-70pt 不含任何内容(文字从 y=80 开始)
+        # sample_pdf 顶部 0-60pt 不含任何内容(文字从 y=80 开始)
         clip = fitz.Rect(0, 0, doc[0].rect.width, 60)
-        y0, y1 = pdf_service._content_y_range(doc[0], clip)
+        bbox = pdf_service._content_bbox(doc[0], clip)
     finally:
         doc.close()
 
-    assert (y0, y1) == (clip.y0, clip.y1)
+    assert bbox == clip
 
 
-def test_render_question_preview_returns_single_png(sample_pdf: Path) -> None:
-    """跨页一题应当被纵向拼接为一张 PNG。"""
+def test_horizontal_clip_excludes_content_outside_x_range(sample_pdf: Path, tmp_path: Path) -> None:
+    """横向裁剪必须真实生效:x 范围只框住左侧空白(0..60pt)时,导出不应带出任何文字。"""
+    out_blank = tmp_path / "blank.pdf"
+    out_text = tmp_path / "text.pdf"
+    # sample_pdf 文字从 x=72 起;0..60 是纯左边距
+    blank_q = [Question(no=1, regions=[_region(0, 100, 300, x1=0, x2=60)])]
+    text_q = [Question(no=1, regions=[_region(0, 100, 300, x1=0, x2=595)])]
+
+    assert pdf_service.build_pdf({DOC_A: sample_pdf}, out_blank, blank_q, margin=28.0, auto_trim=False) == 1
+    assert pdf_service.build_pdf({DOC_A: sample_pdf}, out_text, text_q, margin=28.0, auto_trim=False) == 1
+
+    doc_blank = fitz.open(out_blank.as_posix())
+    doc_text = fitz.open(out_text.as_posix())
+    try:
+        assert doc_blank[0].get_text("text").strip() == "", "x 裁剪应把文字排除在外"
+        assert "Question line" in doc_text[0].get_text("text"), "整页宽时文字应保留"
+    finally:
+        doc_blank.close()
+        doc_text.close()
+
+
+def test_build_pdf_renders_footer_text(sample_pdf: Path, tmp_path: Path) -> None:
+    """footer_text 非空时,每页左下角应有署名文字;未传时不应出现。"""
+    questions = [
+        Question(no=1, regions=[_region(0, 120, 300)]),
+        Question(no=2, regions=[_region(1, 120, 240)]),
+    ]
+
+    out_with = tmp_path / "with_footer.pdf"
+    made = pdf_service.build_pdf(
+        {DOC_A: sample_pdf}, out_with, questions, margin=28.0, footer_text="命题人:张老师"
+    )
+    assert made == 2
+    doc = fitz.open(out_with.as_posix())
+    try:
+        for page in doc:
+            assert "命题人:张老师" in page.get_text("text"), "每页都应带页脚署名"
+    finally:
+        doc.close()
+
+    out_without = tmp_path / "no_footer.pdf"
+    pdf_service.build_pdf({DOC_A: sample_pdf}, out_without, questions, margin=28.0)
+    doc = fitz.open(out_without.as_posix())
+    try:
+        assert "命题人" not in doc[0].get_text("text")
+    finally:
+        doc.close()
+
+
+def test_build_pdf_footer_size_controls_font_size(sample_pdf: Path, tmp_path: Path) -> None:
+    """footer_size 应真实落到渲染字号上(从文字层 span 反查 size)。"""
+    questions = [Question(no=1, regions=[_region(0, 120, 300)])]
+    out = tmp_path / "footer_14.pdf"
+    made = pdf_service.build_pdf(
+        {DOC_A: sample_pdf}, out, questions, margin=28.0, footer_text="张老师", footer_size=14.0
+    )
+    assert made == 1
+
+    doc = fitz.open(out.as_posix())
+    try:
+        spans = [
+            span
+            for block in doc[0].get_text("dict")["blocks"]
+            if block.get("type") == 0
+            for line in block.get("lines", [])
+            for span in line.get("spans", [])
+            if "张老师" in span.get("text", "")
+        ]
+    finally:
+        doc.close()
+    assert spans, "应能在文字层找到署名 span"
+    assert spans[0]["size"] == pytest.approx(14.0, abs=0.5)
+
+
+def test_render_question_preview_returns_single_png(sample_pdf: Path, second_pdf: Path) -> None:
+    """跨页 + 跨文档的一题应当被纵向拼接为一张 PNG。"""
     q = Question(
         no=1,
-        segments=[Segment(page=0, y1=120, y2=300), Segment(page=1, y1=120, y2=240)],
+        regions=[
+            _region(0, 120, 300, doc_id=DOC_A),
+            _region(0, 60, 130, doc_id=DOC_B),
+        ],
     )
-    png = pdf_service.render_question_preview(sample_pdf, q, auto_trim=True)
+    png = pdf_service.render_question_preview(
+        {DOC_A: sample_pdf, DOC_B: second_pdf}, q, auto_trim=True
+    )
     assert png is not None
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_render_question_preview_returns_none_when_invalid(sample_pdf: Path) -> None:
-    """所有段越界 / 空高时返回 None。"""
-    q = Question(no=1, segments=[Segment(page=99, y1=0, y2=10)])
-    assert pdf_service.render_question_preview(sample_pdf, q) is None
-
-
-def test_trim_applies_after_auto_trim(sample_pdf: Path) -> None:
-    """关键回归:`trim` 必须在 `auto_trim` 之后生效,不能被去白边吞掉。
-
-    构造:把 segments[0] 框成"整页"(y1=0..页高),auto_trim 必定会把它收紧到
-    文字内容范围(顶部白边 → 内容起点)。如果 trim.top 与 auto_trim 串联在 clip
-    层,小量 top 会被 `max(clip.y0, ty0)` 吃掉;正确实现应当让 trim 在 auto_trim
-    之后再向内收一刀。"""
-    doc = fitz.open(sample_pdf.as_posix())
-    try:
-        ph = doc[0].rect.height
-        q_no_trim = Question(no=1, segments=[Segment(page=0, y1=0, y2=ph)])
-        q_with_trim = Question(
-            no=1,
-            segments=[Segment(page=0, y1=0, y2=ph)],
-            trim=QuestionTrim(top=10, bottom=15),
-        )
-        no_trim = pdf_service._normalize_segments(q_no_trim, doc, auto_trim=True)
-        with_trim = pdf_service._normalize_segments(q_with_trim, doc, auto_trim=True)
-    finally:
-        doc.close()
-
-    assert len(no_trim) == 1 and len(with_trim) == 1
-    base_rect = no_trim[0][1]
-    trimmed_rect = with_trim[0][1]
-    # trim 永远在 auto_trim 结果之上再裁,所以差值严格 = (top + bottom)
-    assert trimmed_rect.y0 == pytest.approx(base_rect.y0 + 10, rel=0, abs=1e-6)
-    assert trimmed_rect.y1 == pytest.approx(base_rect.y1 - 15, rel=0, abs=1e-6)
-
-
-def test_trim_applies_to_first_and_last_segments_in_cross_page(sample_pdf: Path) -> None:
-    """跨两页时:top 改 segments[0],bottom 改 segments[-1],中间段不动。"""
-    doc = fitz.open(sample_pdf.as_posix())
-    try:
-        ph0 = doc[0].rect.height
-        q = Question(
-            no=1,
-            segments=[
-                Segment(page=0, y1=200, y2=ph0),
-                Segment(page=1, y1=0, y2=400),
-            ],
-            trim=QuestionTrim(top=20, bottom=50),
-        )
-        segs_no_at = pdf_service._normalize_segments(q, doc, auto_trim=False)
-    finally:
-        doc.close()
-
-    assert len(segs_no_at) == 2
-    first = segs_no_at[0][1]
-    last = segs_no_at[1][1]
-    # 第一段被 top 收紧 20pt
-    assert first.y0 == pytest.approx(200 + 20)
-    assert first.y1 == pytest.approx(ph0)
-    # 最后一段被 bottom 收紧 50pt
-    assert last.y0 == pytest.approx(0)
-    assert last.y1 == pytest.approx(400 - 50)
-
-
-def test_trim_top_cascades_across_segments(sample_pdf: Path) -> None:
-    """top 吃完第一段后,剩余量继续吃下一段的顶部(跨段级联)。"""
-    doc = fitz.open(sample_pdf.as_posix())
-    try:
-        q = Question(
-            no=1,
-            segments=[
-                Segment(page=0, y1=100, y2=150),  # 高 50
-                Segment(page=1, y1=0, y2=400),
-            ],
-            trim=QuestionTrim(top=80, bottom=0),
-        )
-        segs = pdf_service._normalize_segments(q, doc, auto_trim=False)
-    finally:
-        doc.close()
-
-    # 第一段被完全吃掉,剩 30pt 继续吃第二段的顶部
-    assert len(segs) == 1
-    assert segs[0][0] == 1
-    rect = segs[0][1]
-    assert rect.y0 == pytest.approx(30)
-    assert rect.y1 == pytest.approx(400)
-
-
-def test_trim_bottom_cascades_into_first_page_footer(sample_pdf: Path) -> None:
-    """关键回归(用户报的 bug 现场):跨两页题 + 大 bottom,吃完第二页那段后继续吃第一页底部。
-
-    场景:题目跨页,segments[0] 是"第一页下半部分"(底部带"第1页(共2页)"页脚),
-    segments[1] 是"第二页上半部分"。用户拖动 bottom 滑块到 200pt:第二页那一段(200pt)
-    被完全吃掉,剩 0;若 bottom = 230,则吃穿第二页后还要继续从第一页底部再吃 30pt。
-    """
-    doc = fitz.open(sample_pdf.as_posix())
-    try:
-        ph0 = doc[0].rect.height
-        q = Question(
-            no=1,
-            segments=[
-                Segment(page=0, y1=300, y2=ph0),  # 第一页下半,底部带页脚
-                Segment(page=1, y1=0, y2=200),  # 第二页上半,高 200
-            ],
-            trim=QuestionTrim(top=0, bottom=230),  # 200 + 30
-        )
-        segs = pdf_service._normalize_segments(q, doc, auto_trim=False)
-    finally:
-        doc.close()
-
-    # 第二段被完全吃掉,剩 30pt 继续吃第一段底部
-    assert len(segs) == 1
-    assert segs[0][0] == 0
-    rect = segs[0][1]
-    assert rect.y0 == pytest.approx(300)
-    assert rect.y1 == pytest.approx(ph0 - 30)
-
-
-def test_trim_eats_everything_returns_empty(sample_pdf: Path) -> None:
-    """trim 大到把所有段都吃光时返回空列表(由上层判 X-Empty)。"""
-    doc = fitz.open(sample_pdf.as_posix())
-    try:
-        q = Question(
-            no=1,
-            segments=[
-                Segment(page=0, y1=100, y2=200),  # 高 100
-                Segment(page=1, y1=0, y2=100),  # 高 100
-            ],
-            trim=QuestionTrim(top=0, bottom=500),  # 远超 200 总高
-        )
-        segs = pdf_service._normalize_segments(q, doc, auto_trim=False)
-    finally:
-        doc.close()
-    assert segs == []
+    """所有区域越界 / 空高时返回 None。"""
+    q = Question(no=1, regions=[_region(99, 0, 10)])
+    assert pdf_service.render_question_preview({DOC_A: sample_pdf}, q) is None
 
 
 # ---------------------------------------------------------------------------

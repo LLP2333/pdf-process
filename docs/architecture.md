@@ -2,7 +2,7 @@
 
 ## 一句话定位
 
-「上传一份文字型 PDF,可选择「自动识别题号」一键产出草稿分割线,在网页上单击加分割线(两条之间为一题),通过预览弹窗逐题二次裁剪上下边界(排除页眉/页码),一键导出横版 A4 PDF / 16:9 PPTX。」
+「上传一份或多份文字型 PDF,在画布上**拖拽框选**每道题(支持左右分栏、跨页、跨试卷组题),右侧面板实时预览裁剪效果并可拖拽重排,一键导出横版 A4 PDF / 16:9 PPTX(一题一页,可选左下角署名)。」
 
 ## 目录结构
 
@@ -11,7 +11,7 @@
 ├── backend/
 │   ├── app/
 │   │   ├── main.py            # FastAPI 入口与路由
-│   │   ├── pdf_service.py     # PyMuPDF:预览渲染 + 矢量裁剪导出 PDF
+│   │   ├── pdf_service.py     # PyMuPDF:预览渲染 + 多文档矢量裁剪导出 PDF + 页脚署名
 │   │   ├── ppt_service.py     # python-pptx:渲图后插入 16:9 PPTX
 │   │   ├── schemas.py         # Pydantic 模型(请求/响应契约)
 │   │   └── storage.py         # uploads/outputs 目录约定与过期清理
@@ -21,33 +21,24 @@
 │   └── Dockerfile
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx
-│   │   ├── api.ts
-│   │   ├── types.ts               # Divider / DerivedQuestion / Adjustment
-│   │   ├── dividers.ts            # 分割线 → 题目派生 + 二次裁剪应用(纯函数 + 单测)
+│   │   ├── App.tsx                # 顶层状态:docs / history / selection / 导出参数
+│   │   ├── api.ts                 # 唯一对接后端的位置
+│   │   ├── types.ts               # EditorRegion / EditorQuestion / DocEntry / Selection
+│   │   ├── editorState.ts         # 题目+区域操作、排序插入、撤销栈(纯函数 + 单测)
+│   │   ├── palette.ts             # 题目循环配色(画布与面板共用)
 │   │   ├── styles.css
 │   │   └── components/
-│   │       ├── UploadPanel.tsx
-│   │       ├── PdfPage.tsx        # PDF 单击/拖动/Shift单击/X 删除分割线
-│   │       ├── QuestionList.tsx   # 左栏:派生题目列表(只读)
-│   │       ├── ExportPanel.tsx    # 左栏顶部:自动去白边 + 页边距 + 打开预览
-│   │       └── PreviewModal.tsx   # 弹窗:逐题预览 + 顶部/底部再裁剪 + 直接导出
-│   ├── tests/                 # vitest:api 与组件
-│   ├── index.html
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   ├── default.conf.template     # nginx 模板,启动时由 envsubst 注入 CLIENT_MAX_BODY_SIZE
-│   └── Dockerfile
-├── desktop/                  # Windows 桌面客户端打包
-│   ├── launcher.py           # 启动器:uvicorn 后台线程 + 前端静态挂载 + Tk 启停窗口
-│   ├── exam_splitter.spec    # PyInstaller 单文件打包配置
-│   └── requirements.txt      # 打包依赖(后端运行时 + pyinstaller)
+│   │       ├── TopBar.tsx         # 品牌 + 撤销重做 + 导出设置弹层 + 导出按钮
+│   │       ├── DocumentRail.tsx   # 左栏:多文档上传/切换/移除 + Word 引导
+│   │       ├── PageCanvas.tsx     # 中央画布:框选/移动/缩放/Shift 追加(Konva)
+│   │       ├── QuestionPanel.tsx  # 右栏:实时缩略图 + 拖拽重排 + 排除/删除
+│   │       └── UploadPanel.tsx    # 首屏多文件上传
+│   ├── tests/                 # vitest:editorState / api / 组件
+│   └── ...
+├── desktop/                  # Windows 桌面客户端打包(launcher + PyInstaller spec)
 ├── docs/                     # 本目录:开发文档
-├── uploads/                  # 运行时上传(gitignore)
-├── outputs/                  # 运行时预览 PNG + 导出产物(gitignore)
-├── .github/workflows/
-│   └── build-windows.yml     # CI:windows-latest 构建并发布 ExamSplitter.exe
+├── uploads/  outputs/        # 运行时数据(gitignore)
+├── .github/workflows/build-windows.yml
 ├── compose.yaml
 └── README.md
 ```
@@ -55,84 +46,67 @@
 ## 数据流
 
 ```
-用户              浏览器(React)                  FastAPI (Uvicorn)             磁盘
- │  选择 PDF       │                                  │                          │
- │ ──────────────▶ │ POST /api/upload                 │ 校验 → 落盘 source.pdf   │
- │                 │                                  │ 每页 144 DPI 渲染 PNG    │
- │                 │ ◀───── UploadResponse ────────── │ 返回 doc_id + pages      │
- │                 │ <img src="/api/pages/.../page_NNN.png">                     │
- │                 │ 用户在画布上单击/拖动分割线      │                          │
- │                 │ dividers → DerivedQuestion[]     │                          │
- │                 │ (相邻两条之间;首末以外被忽略)   │                          │
- │ 点「预览」───▶ │ PreviewModal 打开                │                          │
- │                 │ 逐题 POST /api/preview/{doc_id}  │ 应用 top/bottom 微裁后   │
- │                 │   {question(已应用 adj),         │ 去白边 + 拼接 PNG        │
- │                 │    auto_trim}                    │                          │
- │                 │ ◀────── image/png ────────────── │                          │
- │ 调整滑块 ─────▶ │ 重新 POST /api/preview ─────────▶│                          │
- │ 确认导出 ─────▶ │ POST /api/export/{doc_id}        │ 矢量裁剪 / 16:9 拼图     │
- │                 │   {format, margin, auto_trim,    │ 写 outputs/.../export.*  │
- │                 │    questions(已应用 adj)}        │                          │
- │ 浏览器自动下载◀ │ ◀── application/pdf | pptx ───── │                          │
+用户               浏览器(React)                    FastAPI (Uvicorn)           磁盘
+ │ 选择 1..N 份 PDF │                                   │                        │
+ │ ───────────────▶ │ POST /api/upload(逐份)           │ 校验 → 落盘 source.pdf │
+ │                  │ ◀──── UploadResponse ──────────── │ 每页 192 DPI 渲染 PNG  │
+ │                  │ <img src="/api/pages/.../page_NNN.png">                    │
+ │ 在画布上拖拽框选 │ editorState: questions[]          │                        │
+ │ (Shift 追加区域) │  ├ EditorQuestion{regions[]}      │                        │
+ │                  │  └ History{past/present/future}   │                        │
+ │                  │ 右栏逐题 POST /api/preview        │ 规范化 regions →       │
+ │                  │   {question(regions 带 doc_id)}   │ 去白边 → 拼接 PNG      │
+ │                  │ ◀────── image/png ─────────────── │                        │
+ │ 点「导出 PDF」──▶│ POST /api/export                  │ 多文档矢量裁剪 / 拼图  │
+ │                  │  {format, margin, auto_trim,      │ + 可选页脚署名         │
+ │                  │   footer_text, questions}         │ 写 outputs/.../export.*│
+ │ 浏览器自动下载 ◀ │ ◀── application/pdf | pptx ────── │                        │
 ```
 
 ## 关键设计决策
 
-1. **分割线为唯一交互单元 + 两条分割线之间为一道题**:用户在 PDF 上单击加水平分割线;按 `(page, y)` 排序后,**每两条相邻分割线之间**就是一题。第一条分割线以上、最后一条分割线以下的内容会被自动忽略,这样用户可以直接用"两端的分割线"去掉页眉/页脚/页码。N 条线 ⇒ N-1 道题;前端不维护题号,完全由分割线推导。
-2. **坐标系**:全程使用 PDF 原始坐标(单位 pt),前端只用 `pageHeight` 做一次像素↔pt 换算。后端从来不需要知道像素。
-3. **PDF 导出走矢量**:沿用 PyMuPDF 的 `show_pdf_page(target_rect, src_doc, page, clip=clip)`,公式 / 表格 / 图形 100% 保留原貌,一题一页,横版 A4,题区置顶居中。
-4. **自动去白边**:`auto_trim=true`(默认)时,对每段在 1x 灰度像素图上逐行扫描,找出首末非白行回算到 pt 坐标。同一开关同时作用于矢量 PDF 导出、PPTX 导出与预览,确保所见即所得。
-5. **二次裁剪 = 题目级别 `trim: {top, bottom}` 字段(后端在 `auto_trim` 之后单独应用,跨段级联)**:在预览弹窗中,每题可对"顶部/底部"再额外裁掉若干 pt。**前端不再 mutate segments 的 y 值,而是把 top/bottom 作为 `question.trim` 字段一起上传**;后端 `_normalize_segments` 先做完 `auto_trim` 像素扫描,**之后**再对第一/最后一段应用 trim,且当某端段被吃光时剩余量会**继续吃前/后相邻段**。这样可以避免"用户调的微调量 < 自动去白边量"时被吞掉,也能让跨页题用「底部再裁」从最后一段一路吃到第一页底部的页脚("第 1 页(共 2 页)")。Adjustment 以稳定的 question id(`${prevDivId}|${nextDivId}`)存放,分割线被删时孤儿 adjustment 会被自动清理。
-13. **逐题"是否导出"开关(前端纯本地状态,不进入后端契约)**:预览弹窗每张卡片头部一个复选框,默认勾选 = 导出;取消勾选 = 不导出,卡片整体灰显 + 显示"不导出"徽标。`App.excludedQuestions: Record<string, true>` **反向**记录被排除的题(以稳定 question.id 为 key),与 `adjustments` 共用孤儿清理 effect。`doExport` 先 `filter((q) => !excluded[q.id])` 再 `applyAdjustment` 再丢空段,最后 `map((q, idx) => ({...q, no: idx + 1}))` **重新连续编号**(避免后端按 `no` 排序后题号跳变);全部排除时按钮禁用 + 文字提示。这套机制留在前端是因为后端只需要"按 no 排序拿到一组要导出的题",不应当感知"原先有多少题、谁被跳过"。
-6. **PPTX 导出走栅格**:python-pptx 不支持直接嵌入 PDF;每段以 220 DPI 渲染为 PNG 再插入 16:9 幻灯片。讲解投影场景足够清晰,体积可控。
-7. **预览弹窗串行而非并行**:`PreviewModal` 用 200ms debounce + 串行调用 `/api/preview`,避免调滑块时把后端打趴;每次请求按 `fingerprint` 校验,过期响应丢弃。
-8. **无登录、无持久会话**:doc_id 即资源句柄,16 位小写 hex(`uuid4().hex[:16]`,64 bit 随机不可枚举),过期(默认 24h)自动清理,可通过 `EXAM_SPLITTER_RETENTION` 调整。
-9. **路径遍历防护 + 配额闸门**:所有 `{doc_id}` 路由开头走严格白名单 `^[a-f0-9]{16}$`,非法形式(含 `..`、URL 编码绕过等)统一 404 不区分原因。上传走流式写盘并按 `EXAM_SPLITTER_MAX_UPLOAD_MB`(默认 64MB)实时拒绝,`uploads + outputs` 总占用按 `EXAM_SPLITTER_MAX_STORAGE_MB`(默认 2GB)做软上限:超过时 `storage.maintenance()` 按 mtime 升序清掉**保护期(默认 5 分钟)以外**的旧 doc,清不下来才让本次上传 507,避免误删别人正在用的文档。
-10. **前后端解耦,Nginx 反代统一同源**:前端容器 80 暴露,`/api/*` 反代到后端 8000,浏览器只见同源,免 CORS 复杂度。本地开发用 Vite proxy 模拟。`client_max_body_size` 走 `default.conf.template` + 镜像内置 envsubst,通过 compose 的 `CLIENT_MAX_BODY_SIZE` 注入,与后端 `MAX_UPLOAD_MB` 保持联动。
-11. **错误返回中文**:所有用户可见错误都用 `HTTPException(detail="中文")`,前端 `api.ts` 统一抽取 `detail` 抛出。
-12. **Windows 桌面客户端 = 同源单进程 exe**:`desktop/launcher.py` 把后端 `app` 与前端 `dist/` 跑在同一个 uvicorn 进程、同一端口(默认 8000,被占用则取系统空闲端口),用 `StaticFiles(html=True)` 挂到根路由 `/`。因为前端 `api.ts` 调的是相对路径 `/api/*`,同源后无需 nginx 反代即可直连。uvicorn 跑在后台线程(`install_signal_handlers` 被置空,子线程不注册信号),主线程用标准库 Tkinter 提供「打开网页 / 停止并退出」的启停界面,用户体验仍是"本地网页"。数据目录落 `%LOCALAPPDATA%\ExamSplitter`(规避 Program Files 无写权限),且必须在 `import app.main` 之前设好 `EXAM_SPLITTER_DATA_DIR`(`storage.py` 在导入时即读取)。打包由 PyInstaller(`exam_splitter.spec`,onefile + `collect_all` 收齐 uvicorn/pymupdf/pptx 等动态依赖)完成,CI 在 `windows-latest` 上先 `npm run build` 再 `pyinstaller`。
+1. **矩形区域是唯一切分单元,一道题 = 1..N 个区域**:用户在画布上拖拽画框;每个 `Region` 自带 `(doc_id, page, x1, y1, x2, y2)`。跨页 / 左右分栏 / 跨文档组题都是"给同一道题追加一个区域"(画布上按住 Shift 拖拽),导出时区域按序纵向堆叠、各自水平居中。旧版"水平分割线"模型(整页宽、只能上下切)已废弃。
+2. **坐标系**:全程使用 PDF 原始坐标(单位 pt),前端只用 `pageWidth/pageHeight` 做像素↔pt 换算,后端永不接受像素。
+3. **多文档组卷**:每份上传的 PDF 独立 `doc_id`;`/api/preview`、`/api/export` 是文档无关路由,后端把请求体里引用到的所有 doc_id 逐个过白名单(`^[a-f0-9]{16}$` + 存在性),任一失效整体 404。导出产物落在第一个被引用 doc 的 outputs 目录,由 `storage.maintenance()` 统一回收。
+4. **PDF 导出走矢量**:`show_pdf_page(target_rect, src_doc, page, clip=clip)`,公式 / 表格 / 图形 100% 保留原貌,一题一页,横版 A4,题区置顶、区域各自居中。
+5. **自动去白边升级为 x/y 双向**:`auto_trim=true`(默认)时,对每个区域在 1x 灰度像素图上用 PIL `point(阈值).getbbox()`(C 实现)一次拿到内容最小包围盒,四周各留 2pt 安全边。框选模型下用户常框住"半栏",横向白边同样需要收紧。同一开关同时作用于 PDF / PPTX / 预览,所见即所得。旧版题目级 `trim`(二次裁剪滑块)已废弃 —— 框本身就是裁剪边界。
+6. **页脚署名 `footer_text` + 字号 `footer_size`**:导出请求可选字段(文本 ≤50 字符,字号 6-24pt 默认 8);PDF 用 PyMuPDF 内置 CJK 字体 `china-s` 在每页左下角画灰字,基线固定在 `(18, H-12)`(默认 helv 不含中文字形会乱码);PPTX 加同位置文本框,高度随字号增长且底部锚定。位置固定不随 margin 变化,保证多页署名对齐、字号变大时向上生长不出界。
+7. **前端状态 = `EditorQuestion[]` + 撤销栈**:`editorState.ts` 全部纯函数(增删区域 / 移动缩放 / 重排 / 排除 / 文档级联清理 / 导出前重编号),`History{past, present, future}` 存不可变快照,上限 50 步。拖动/缩放/方向键长按走 `replacePresent`(不入栈),手势结束 `commitFrom(手势前快照)`一次入栈 —— 一次拖动只占一步撤销。文档被移除时重置历史,避免 undo 复活引用已删文档的孤儿区域。
+8. **新题按视觉顺序插入**:画完新框按 (文档序, 页, y, x) 找插入位,题号始终符合试卷阅读顺序;用户也可在右栏拖拽卡片手动重排,导出前 `buildExportQuestions` 统一过滤(excluded / 宽高 < 4pt / 文档已删)并把 `no` 重排为 1..N。
+9. **右栏常驻实时预览(替代旧预览弹窗)**:每题卡片直接展示 `/api/preview` 的拼接 PNG,300ms 防抖 + 串行请求 + fingerprint 比对丢弃过期响应;卡片支持拖拽重排、勾选"是否导出"、删除、单击跳转画布(自动切换文档并滚动到对应页)。
+10. **自动识别降级为辅助功能**:入口移到画布工具条(「自动识别(草稿)」),仅对当前文档生效;返回的 N+1 条分割线被转换成整页宽草稿题框(`draftQuestionsFromDividers`),替换"完全属于该文档"的题、保留跨文档组合题,用户在草稿框上直接拖动/缩放微调。识别不准是常态,手动框选才是主路径。
+11. **Word 文档不做程序内转换**:.docx 无固定版面,服务端转换(LibreOffice)体积大、公式排版易错,且桌面版 exe 无法打包;上传界面引导用户用 Word/WPS「另存为 PDF」,保真度反而最高。
+12. **无登录、无持久会话**:doc_id 即资源句柄,16 位小写 hex(64 bit 随机不可枚举),过期(默认 24h)自动清理,可通过 `EXAM_SPLITTER_RETENTION` 调整。
+13. **路径遍历防护 + 配额闸门**:所有 doc_id(路由路径与请求体内)统一走白名单;上传流式写盘按 `EXAM_SPLITTER_MAX_UPLOAD_MB`(默认 64MB)实时拒绝;`uploads + outputs` 总占用按 `EXAM_SPLITTER_MAX_STORAGE_MB`(默认 2GB)做软上限,LRU 清理带 5 分钟保护期。
+14. **前后端解耦,Nginx 反代统一同源**;**Windows 桌面客户端**把后端与前端 dist 跑在同一 uvicorn 进程(详见 `desktop/launcher.py`),两者均不受本轮契约变化影响(仍是 `/api/*` 相对路径)。
+15. **错误返回中文**:所有用户可见错误都用 `HTTPException(detail="中文")`,前端 `api.ts` 统一抽取 `detail` 抛出;导出/上传结果用底部 toast 呈现。
 
 ## 后端模块职责
 
 | 模块 | 职责 |
 | --- | --- |
-| `app.main` | FastAPI 应用、路由、错误兜底,**不写业务** |
-| `app.schemas` | Pydantic 请求/响应模型,**所有外部契约的唯一源** |
-| `app.storage` | `uploads/`、`outputs/` 路径约定 + 单文件/总容量上限 + `maintenance()`(过期清理 + 超容量 LRU,带保护窗) |
-| `app.pdf_service` | PDF 预览渲染 + 自动去白边 + 矢量裁剪输出 PDF + 拼接单题预览 PNG + 文字层判定 / 题号自动识别 |
-| `app.ppt_service` | 把 PNG 段组装成 16:9 PPTX(依赖 `pdf_service.render_segments_to_png`) |
+| `app.main` | FastAPI 应用、路由、请求体 doc_id 收集与校验、错误兜底,**不写业务** |
+| `app.schemas` | Pydantic 请求/响应模型,**所有外部契约的唯一源**(Region / Question / ExportRequest...) |
+| `app.storage` | `uploads/`、`outputs/` 路径约定 + 单文件/总容量上限 + `maintenance()` |
+| `app.pdf_service` | PDF 预览渲染 + 双向去白边 + 多文档矢量裁剪输出 PDF + 页脚署名 + 单题预览 PNG + 文字层判定 / 题号自动识别 |
+| `app.ppt_service` | 把 PNG 区域组装成 16:9 PPTX + 页脚文本框(依赖 `pdf_service.render_regions_to_png`) |
 
 ## 前端模块职责
 
 | 模块 | 职责 |
 | --- | --- |
-| `App.tsx` | 顶层状态:`doc`、`dividers`、`autoTrim`、`margin`、`adjustments`、`excludedQuestions`、`showPreview`、`activeQuestionIndex`、`autoDetecting / autoDetectMessage` |
-| `dividers.ts` | 纯函数 `buildQuestionsFromDividers`(N 条 → N-1 道题)+ `applyAdjustmentToQuestion` |
+| `App.tsx` | 顶层状态:`docs` / `activeDocId` / `history`(题目撤销栈)/ `selection` / `zoom` / 导出参数 / toast;全局键盘(撤销重做、Delete、方向键微调、Shift 追加模式) |
+| `editorState.ts` | 纯函数状态机:画框/追加/移动/删除/重排/排除/级联清理/`buildExportQuestions`/`draftQuestionsFromDividers` + History |
 | `api.ts` | 唯一对接后端的位置,所有 fetch / 错误抽取在此 |
-| `UploadPanel` | 上传交互,无业务状态 |
-| `PdfPage` | 单页 PDF + Konva Stage 叠加:单击新建 / 拖动调整 / Shift单击+× 删除分割线 |
-| `QuestionList` | 左栏:派生题目列表(跨页提示 + 二次裁剪角标)+ 跳转 + 清空分割线 |
-| `ExportPanel` | 左栏顶部:「自动识别题号」按钮 + 结果提示 + 自动去白边 + 页边距 + 「预览裁剪效果」按钮 + 折叠左栏按钮 |
-| `PreviewModal` | 弹窗:逐题预览 + 顶部/底部再裁剪滑块 + **每题"导出/不导出"复选框** + 「确认并导出 PDF/PPTX」 |
-
-## 关键流程:自动识别题号
-
-`POST /api/auto_detect/{doc_id}` 在 `pdf_service` 内分两步走:
-
-1. **`detect_text_layer(pdf_path)`** —— 用 `page.get_text("text")` 取每页文字总字符数,平均 ≥ `TEXT_LAYER_MIN_CHARS_PER_PAGE`(20)才判定为文字版。扫描件每页只有零星 OCR 残片(常 < 10),会被直接判定为非文字版,前端据此提示用户回退到手动画线。
-2. **`auto_detect_dividers(pdf_path)`** —— 仅在文字版上运行:
-   - 用 `page.get_text("dict")` 拿到每行的 bbox 与文本;
-   - 行首正则 `^\s*(\d{1,3})\s*[\.\、\)\)]\s*\S` 匹配题号(强制后面紧跟非空白字符,排除"年份"、"页码");
-   - 题号必须位于页面左侧(`bbox.x0 < 页宽 * 0.5`),进一步排除右栏页码、答题卡占位等;
-   - 候选按 (page, y) 排序后,跑 O(n²) DP 选出"题号差为 1 的最长升序链",过滤"选项里的 1./2."与"第 1 页"等噪音(链长 < 2 视为无效);
-   - 链上每个题号上方 6pt 各画一条分割线;**末尾再加一条放在链中最后一个题号所在页底部 `height - 6pt`**,因为前端约定"两条相邻线之间为一题",N 个题号要切出 N 题需要 N+1 条线;不把分割线放到文档末页是为了避免误把"参考答案 / 答题卡"卷入最后一题。
-
-前端 `App.handleAutoDetect`:
-- 扫描件 / 无题号匹配 → 仅在 `ExportPanel` 顶部展示中文提示,不动用户已有的分割线;
-- 识别成功 → 用 `setDividers([...])` 替换(并 `setAdjustments({})` 清空二次裁剪),让用户基于草稿继续手工微调。
+| `palette.ts` | 题目循环配色,画布与面板共用 |
+| `TopBar` | 撤销/重做按钮 + 导出设置弹层(去白边 / 页边距 / 页脚署名)+ 导出 PDF/PPTX 按钮 |
+| `DocumentRail` | 多文档上传(逐份调 `/api/upload`)、切换画布文档、移除文档、Word 引导文案 |
+| `PageCanvas` | 单页画布:拖拽画框(Shift=追加)、选中/移动、Transformer 八向缩放、边界 clamp;手势结束才 commit |
+| `QuestionPanel` | 每题实时缩略图(防抖+fingerprint)、拖拽重排、"是否导出"勾选、删除、跳转画布 |
+| `UploadPanel` | 首屏多文件上传(与 DocumentRail 共用 App 的上传逻辑) |
 
 ## 扩展点
 
-- **OCR 走通扫描件**:在 `detect_text_layer` 返回 `is_text=False` 后串一个 OCR(如 PaddleOCR / tesseract),再走 `auto_detect_dividers` 同款题号识别即可,前后端契约无需改动。
-- **横向裁剪**:在 `Segment` 模型加可选 `x1/x2`,`_normalize_segments` 已经预留好横向取页宽的位置;前端再加两条垂直辅助线;预览弹窗复用滑块控件即可。
-- **批量上传**:在 `storage` 加 `batch_id` 维度即可。
+- **OCR 走通扫描件**:在 `detect_text_layer` 返回 `is_text=False` 后串一个 OCR(如 PaddleOCR / tesseract),再走同款题号识别,前后端契约无需改动。
+- **区域级旋转 / 去噪**:`Region` 可加可选 `rotate` 字段,`_normalize_regions` 统一处理。
+- **导出版式**:目前固定横版 A4 / 16:9 一题一页;若要"多题一页"或竖版,只需在 `build_pdf` 的排版循环上做文章,契约不变。

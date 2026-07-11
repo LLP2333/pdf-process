@@ -1,33 +1,44 @@
-import type { PageInfo, Question, Segment } from "./api";
+import type { PageInfo, Question, Region } from "./api";
 
-export type { PageInfo, Question, Segment };
+export type { PageInfo, Question, Region };
 
 /**
- * 用户在某页 PDF 上手动添加的水平分割线。
+ * 编辑器内的矩形区域:后端 `Region` + 前端稳定 id。
  *
- * 模型:每道题需要"上下两条分割线"。N 条分割线 ⇒ N-1 道题;
- * 第一条线以上的内容、最后一条线以下的内容都不算题(用户可借此排除页眉/页脚/页码)。
+ * 坐标恒为 PDF 原始坐标(pt),且保持 `x1<x2`、`y1<y2` 的规范形
+ * (画框结束时即归一,后续移动/缩放只会产生规范形)。
  */
-export interface Divider {
+export interface EditorRegion {
   id: string;
+  docId: string;
   page: number;
-  y: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 }
 
-/** 派生题目:在后端契约 `Question` 之外附带一个稳定 id,用于挂载二次裁剪等本地状态。 */
-export interface DerivedQuestion extends Question {
-  /** 稳定 id:由派生它的两条分割线 id 拼接而成,删任意一条 ⇒ 旧 id 自然失效。 */
+/**
+ * 编辑器内的一道题:1..N 个区域按序纵向堆叠。
+ *
+ * `excluded` 为 true 时该题不参与导出(题目面板里的复选框),
+ * 但仍显示在画布与面板中,便于随时恢复。
+ */
+export interface EditorQuestion {
   id: string;
+  regions: EditorRegion[];
+  excluded?: boolean;
 }
 
-/** 单题的「二次裁剪」调整:在派生 segments 的基础上,顶部/底部各再向内裁掉指定 pt。 */
-export interface Adjustment {
-  top: number;
-  bottom: number;
-}
-
-export interface AppDoc {
+/** 已上传的一份文档(多文档组卷时 rail 里的一项)。 */
+export interface DocEntry {
   docId: string;
   filename: string;
   pages: PageInfo[];
+}
+
+/** 画布中的当前选中:精确到区域(题目 id 冗余存放,省一次反查)。 */
+export interface Selection {
+  questionId: string;
+  regionId: string;
 }

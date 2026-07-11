@@ -3,6 +3,17 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-07-09
+
+- **页脚署名支持自定义字号 `footer_size`**:`ExportRequest` 新增 6-24pt(默认 8)字段;PDF 基线固定离页底 12pt、字号向上生长,PPTX 文本框高度随字号增长且底部锚定;前端「导出设置」新增"署名字号"输入(未填署名时禁用)。测试:后端 +3(schema 默认/越界、PDF span 字号、PPTX run 字号)→ 61 passed,前端 +2 → 40 passed;文档同步 `api.md`、`architecture.md`、`testing.md`。
+
+- **交互模型重构:水平分割线 → 自由矩形框选;支持多文档组卷、页脚署名;UI 全面重设计**:
+  - 契约:`Segment(page,y1,y2)` / `QuestionTrim` 废弃,改为 `Region(doc_id, page, x1, y1, x2, y2)`(区域自带 doc_id,可跨页/跨栏/跨文档组题);`ExportRequest` 新增 `footer_text`(≤50 字,每页左下角 8pt 灰字署名,PDF 用内置 CJK 字体 `china-s`,PPTX 加文本框);`POST /api/preview/{doc_id}`、`/api/export/{doc_id}` 改为文档无关路由 `POST /api/preview`、`POST /api/export`,请求体内所有 doc_id 逐个过白名单,任一失效整体 404。
+  - 后端:`pdf_service` 全面转 regions;自动去白边升级为 **x/y 双向**(PIL `point().getbbox()` 一次拿内容包围盒);多区域堆叠时每段各自水平居中(修掉旧版窄段左贴齐);`build_pdf / build_pptx / render_regions_to_png / render_question_preview` 接收 `dict[doc_id, Path]` 支持多文档;预览渲染 DPI 144→192(画布放大 200% 仍清晰)。
+  - 前端重写:三栏工作区(左文档栏 / 中深色画布 / 右题目面板)+ 顶栏(撤销重做 + 导出设置弹层 + 导出按钮);画布拖拽画框、Shift+拖拽给选中题追加区域、Konva Transformer 八向缩放、Delete 删除、方向键微调(长按只占一步撤销)、Cmd/Ctrl+Z 撤销重做(栈深 50)、缩放控件 50%-200%;右栏每题实时缩略图(300ms 防抖 + fingerprint)+ 拖拽重排 + "是否导出"勾选 + 删除,预览弹窗与二次裁剪滑块整体废弃;多文件上传(首屏与文档栏共用),Word 文档以「另存为 PDF」引导文案替代程序内转换;自动识别降级为画布工具条上的辅助按钮,识别结果转成整页宽草稿框供手动微调(只替换当前文档的纯本文档题)。
+  - 新增 `editorState.ts`(纯函数状态机 + History)与 `palette.ts`;删除 `dividers.ts`、`PdfPage/PreviewModal/QuestionList/ExportPanel` 及其测试。
+  - 测试:后端 58 passed(多文档组题、横向裁剪生效、footer 正反例、请求体 doc_id 白名单等),前端 38 passed(editorState 19 例、api、QuestionPanel、TopBar),`npm run build` 通过;文档同步 `docs/api.md`、`docs/architecture.md`、`docs/testing.md`。
+
 ## 2026-06-24
 
 - **预览弹窗逐题"是否导出"开关**:

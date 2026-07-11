@@ -173,4 +173,4 @@ pyinstaller --noconfirm --clean desktop/exam_splitter.spec
 
 - **PDF 解析失败**:在 `backend` 启动 `--reload` 模式,直接 `uvicorn ... --log-level debug`,FastAPI 会把异常堆栈打到 stderr。
 - **预览图找不到**:确认 `outputs/<doc_id>/page_NNN.png` 存在;若挂载有问题,容器内 `ls /data/outputs/<doc_id>/`。
-- **导出 422**:多半是切分方案里所有段都越界或空高,前端在 `ExportPanel` 已经做了「全空校验」。
+- **导出 422**:多半是切分方案里所有区域都越界或宽/高不足 1pt;前端 `buildExportQuestions` 已在导出前过滤空区域并在无题可导时禁用按钮,一般只有绕过前端直接调接口才会看到。

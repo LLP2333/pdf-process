@@ -16,18 +16,21 @@ alwaysApply: false
 ## 状态管理
 
 - 顶层状态都在 `App.tsx`,组件靠 props 接收。
-- 修改 `questions` 用 `setQuestions((prev) => ...)`,避免闭包陷阱;
-  需要派生回索引(例如新建段后选中),在 `setQuestions` 回调里赋值给外层局部变量,再 `setActiveSegment(...)`。
+- 题目/区域数据的一切变更都走 `editorState.ts` 的纯函数(增删改/重排/撤销栈),
+  组件里只调用 `setHistory((h) => commit(h, someOp(h.present, ...)))`,避免闭包陷阱;
+  高频中间态(拖动/缩放/方向键长按)用 `replacePresent`,手势结束再 `commitFrom(手势前快照)`。
+- 不要在组件内直接改 `EditorQuestion` 对象 —— 全部不可变更新,撤销栈依赖引用比较。
 
 ## 坐标系
 
-- 全程使用 PDF 原始坐标(单位 pt)。
-- 像素↔pt 的换算只在 `PdfPage.tsx` 内做一次:`pdfToDisplay = displayHeight / page.height`。
+- 全程使用 PDF 原始坐标(单位 pt),`Region` 恒保持 `x1<x2 / y1<y2` 规范形。
+- 像素↔pt 的换算只在 `PageCanvas.tsx` 内做一次:`pdfToDisplay = displayWidth / page.width`。
 
 ## 测试 (vitest + Testing Library)
 
 - 位置:`frontend/tests/`。
-- 启用 `globals: true`,`environment: "jsdom"`,setup 文件已加载 `@testing-library/jest-dom`。
-- `react-konva` 难以稳定在 jsdom 测,优先测组件的纯交互层,Canvas 相关用视觉/e2e 手段。
-- 用 `vi.stubGlobal("fetch", ...)` 模拟网络,断言展示文案 + 调用次数 + 请求体。
-- 完成后必须跑通:`npm test && npm run build`,当前基线 10 passed + build OK。
+- 启用 `globals: true`,`environment: "jsdom"`,setup 文件已加载 `@testing-library/jest-dom`
+  与 `URL.createObjectURL / revokeObjectURL` 最小桩。
+- `react-konva` 难以稳定在 jsdom 测(`PageCanvas` 靠视觉/e2e 手段),优先测 `editorState` 纯函数与面板组件交互。
+- 用 `vi.stubGlobal("fetch", ...)` 或 `vi.mock("../src/api", ...)` 模拟网络,断言展示文案 + 调用次数 + 请求体。
+- 完成后必须跑通:`npm test && npm run build`,当前基线 40 passed + build OK。
