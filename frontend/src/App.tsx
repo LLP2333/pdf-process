@@ -54,7 +54,7 @@ export default function App() {
   const [shiftDown, setShiftDown] = useState(false);
 
   const [autoTrim, setAutoTrim] = useState(true);
-  const [bottomSpace, setBottomSpace] = useState(5);
+  const [bottomSpace, setBottomSpace] = useState(40);
   const [footerText, setFooterText] = useState("");
   const [footerSize, setFooterSize] = useState(8);
 

@@ -5,7 +5,7 @@
 
 ## 2026-09-27
 
-- **「页边距」改为「题目留白」滑块**:`ExportRequest.margin`(四周 pt)替换为 `bottom_space`(0-80,默认 5,单位为页高百分比);左 / 右 / 上固定留白 28pt(`pdf_service.PAGE_MARGIN_PT`,PPTX 共用),调大 `bottom_space` 时题目等比缩小、下方留出作答空间。前端「导出设置」的数字输入框换成 range 滑块并实时显示百分比。测试:后端新增"50% 留白时内容位于上半页"用例与 bottom_space 越界用例,前端 TopBar 改测滑块;文档同步 `api.md`、`architecture.md`、`testing.md`、`README.md`。
+- **「页边距」改为「题目留白」滑块**:`ExportRequest.margin`(四周 pt)替换为 `bottom_space`(0-80,默认 40,单位为页高百分比,为老师板书留出作答空间);左 / 右 / 上固定留白 28pt(`pdf_service.PAGE_MARGIN_PT`,PPTX 共用),调大 `bottom_space` 时题目等比缩小、下方留出作答空间。前端「导出设置」的数字输入框换成 range 滑块并实时显示百分比。测试:后端新增"50% 留白时内容位于上半页"用例与 bottom_space 越界用例,前端 TopBar 改测滑块;文档同步 `api.md`、`architecture.md`、`testing.md`、`README.md`。
 
 ## 2026-07-09
 

@@ -57,15 +57,15 @@ def test_bottom_space_bounds(value: float) -> None:
 
 
 def test_auto_trim_defaults_to_true() -> None:
-    """auto_trim 默认 True,前端不传时仍按"去白边"导出;footer 默认不加、字号 8pt。"""
+    """auto_trim 默认 True,前端不传时仍按"去白边"导出;footer 默认不加、字号 8pt;题目留白默认 40%。"""
     req = ExportRequest(
         format="pdf",
-        bottom_space=5,
         questions=[Question(no=1, regions=[_region()])],
     )
     assert req.auto_trim is True
     assert req.footer_text is None
     assert req.footer_size == 8.0
+    assert req.bottom_space == 40.0
 
 
 def test_footer_size_bounds() -> None:

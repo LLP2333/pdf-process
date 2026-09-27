@@ -52,7 +52,7 @@ class Question(BaseModel):
 class ExportRequest(BaseModel):
     format: str = Field("pdf", pattern=r"^(pdf|pptx)$")
     bottom_space: float = Field(
-        5.0,
+        40.0,
         ge=0,
         le=80,
         description="题目下方至少预留的留白,占页高的百分比;左 / 右 / 上固定留白 28pt。",
