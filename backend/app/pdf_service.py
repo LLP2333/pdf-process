@@ -24,7 +24,11 @@ PREVIEW_DPI = 192
 TRIM_WHITE_THRESHOLD = 250  # 像素灰度 ≥ 阈值视为白色,反之视为有内容
 TRIM_PADDING_PT = 2.0  # 自动去白边后向外补的安全边距(pt)
 
-# 页脚署名的排版常量:左下角灰字,固定贴着纸面左下角(不随 margin 变化,
+# 导出页左 / 右 / 上三边的固定留白(pt);下方留白由请求的 bottom_space(页高百分比)控制。
+# PPTX 导出共用此常量。
+PAGE_MARGIN_PT = 28.0
+
+# 页脚署名的排版常量:左下角灰字,固定贴着纸面左下角(不随题目留白变化,
 # 因为题区置顶排布,底部天然留白,固定位置能保证多页产物署名整齐一致)。
 # 字号由请求的 footer_size 控制(6-24pt,默认 8)。
 FOOTER_DEFAULT_FONT_SIZE = 8.0
@@ -220,7 +224,7 @@ def build_pdf(
     doc_paths: dict[str, Path],
     out_path: Path,
     questions: list[Question],
-    margin: float,
+    bottom_space: float,
     auto_trim: bool = True,
     footer_text: str | None = None,
     footer_size: float = FOOTER_DEFAULT_FONT_SIZE,
@@ -234,6 +238,8 @@ def build_pdf(
 
     Args:
         doc_paths: `doc_id -> 源 PDF 路径`,支持一次导出引用多份文档。
+        bottom_space: 题目下方至少预留的留白,占页高的百分比(0-80)。
+            左 / 右 / 上固定留 `PAGE_MARGIN_PT`。
         auto_trim: 若 True,在裁剪前对每个区域做"像素扫描去白边"(x/y 双向)。
         footer_text: 可选页脚署名,每页左下角灰字。
         footer_size: 署名字号(pt),仅在 footer_text 非空时使用。
@@ -246,8 +252,9 @@ def build_pdf(
     try:
         page_rect = fitz.paper_rect("a4-l")
         page_width, page_height = page_rect.width, page_rect.height
+        margin = PAGE_MARGIN_PT
         avail_w = page_width - 2 * margin
-        avail_h = page_height - 2 * margin
+        avail_h = page_height * (1 - bottom_space / 100) - margin
         made = 0
         for q in sorted(questions, key=lambda x: x.no):
             regions = _normalize_regions(q, docs, auto_trim=auto_trim)

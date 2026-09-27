@@ -94,7 +94,7 @@ def test_full_flow_upload_pages_export(client: TestClient, sample_pdf: Path) -> 
     # 4) export pdf(第二题跨页 + 限定 x 范围)
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "questions": [
             _question(doc_id, no=1, y1=120, y2=300),
             {
@@ -130,7 +130,7 @@ def test_export_combines_two_documents(
 
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "auto_trim": False,
         "questions": [
             {
@@ -158,7 +158,7 @@ def test_export_combines_two_documents(
 def test_export_nonexistent_doc_returns_404(client: TestClient) -> None:
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "questions": [_question("deadbeefdeadbeef")],
     }
     resp = client.post("/api/export", json=payload)
@@ -172,7 +172,7 @@ def test_export_rejects_when_any_region_doc_missing(
     doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "questions": [
             _question(doc_id, no=1),
             _question("deadbeefdeadbeef", no=2),
@@ -186,7 +186,7 @@ def test_export_all_invalid_regions_returns_422(client: TestClient, sample_pdf: 
     doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "questions": [_question(doc_id, page=99, y1=0, y2=10)],
     }
     resp = client.post("/api/export", json=payload)
@@ -198,7 +198,7 @@ def test_export_footer_text_appears_in_pdf(client: TestClient, sample_pdf: Path)
     doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "footer_text": "整理:王老师",
         "questions": [_question(doc_id)],
     }
@@ -217,7 +217,7 @@ def test_export_footer_text_too_long_rejected(client: TestClient, sample_pdf: Pa
     doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "footer_text": "长" * 51,
         "questions": [_question(doc_id)],
     }
@@ -230,7 +230,7 @@ def test_export_uses_original_filename(client: TestClient, sample_pdf: Path) -> 
     doc_id = _upload(client, sample_pdf)
     payload = {
         "format": "pdf",
-        "margin": 28,
+        "bottom_space": 5,
         "source_name": "2024期末数学.pdf",
         "questions": [_question(doc_id)],
     }
@@ -247,7 +247,7 @@ def test_export_without_source_name_falls_back(client: TestClient, sample_pdf: P
     for src in (None, "../../"):
         payload = {
             "format": "pptx",
-            "margin": 28,
+            "bottom_space": 5,
             "questions": [_question(doc_id)],
         }
         if src is not None:

@@ -22,7 +22,7 @@
 
 | 文件 | 覆盖点 |
 | --- | --- |
-| `test_schemas.py` | Pydantic 字段校验:format 枚举、空 questions/regions、margin 范围、page/坐标非负、对角线画框合法、`auto_trim` 默认值、**`footer_text` ≤50 字符正反例、`footer_size` 默认 8 / 越界(5、25)拒绝** |
+| `test_schemas.py` | Pydantic 字段校验:format 枚举、空 questions/regions、bottom_space 范围(0-80)、page/坐标非负、对角线画框合法、`auto_trim` 默认值、**`footer_text` ≤50 字符正反例、`footer_size` 默认 8 / 越界(5、25)拒绝** |
 | `test_storage.py` | 路径拼接、`new_doc_id` 格式、`maintenance` 仅清理过期目录 |
 | `test_pdf_service.py` | 预览渲染数量与命名;**regions 契约**:PDF 导出页数、空区域/越界/未知 doc 过滤、对角线 swap、页界 clamp、**跨两份文档组题(输出含两份文档文字)**;**auto_trim x/y 双向收紧**、全白区域保留原范围;**横向裁剪真实生效(x 范围外文字不出现在导出)**;**footer_text 每页出现/未传不出现、footer_size 落到文字层 span 字号**;单题预览拼接(跨文档)/ 空题返回 None;`detect_text_layer` 文字版 / 扫描件正反例;`auto_detect_dividers` N+1 条线 / 噪音过滤 / 扫描件返回空 / 链长不足返回空 |
 | `test_ppt_service.py` | 16:9 尺寸、幻灯片数、空题目跳过、**页脚文本框正反例、footer_size 落到 run 字号** |
@@ -53,7 +53,7 @@ cd backend
 | `editorState.test.ts` | `normalizeRect` 对角线归一;**排序插入**(同文档回头补漏 / 跨文档按 rail 顺序);区域追加/几何更新/删除(最后一个区域删除整题)/未知 id no-op;`removeDocRegions` 级联清理;`moveQuestion` 重排与非法下标;excluded 往返;`buildExportQuestions` 过滤 + 连续重编号 + 已删文档区域剔除;`buildPreviewQuestion` 空题返回 null;**撤销栈**:commit/undo/redo 往返、no-op commit、redo 分支清空、`replacePresent`+`commitFrom` 拖动手势单步入栈、栈深上限;`draftQuestionsFromDividers` N+1 条线 → N 题 / 跨页拆区域 / 空段丢弃 |
 | `api.test.ts` | uploadPdf 成功/失败;**exportFile 走 `/api/export` 且请求体带 footer_text / footer_size 与 regions**、解析中文 Content-Disposition、回退默认名、错误抽取;**previewQuestion 走 `/api/preview`** 解析 `X-Empty` / 错误抽取;autoDetect 文字版 / 扫描件 / 失败时抛出 detail |
 | `QuestionPanel.test.tsx` | 空态引导文案;卡片题号/多文档徽标(卷 A+B)/区域计数 + 防抖后拉取预览(校验请求体);excluded 灰显 + "不导出"徽标 + 计数文案;勾选/删除回调且不冒泡成选中;**区域全部失效(文档已删)显示空态且不发请求** |
-| `TopBar.test.tsx` | 导出按钮回调格式;无可导出题禁用;撤销/重做可用性;设置弹层:页脚署名 / 页边距(夹到 0-120)/ 去白边回调;**署名字号:未填署名时禁用、修改回调且夹到 6-24**;未上传时不渲染工具区 |
+| `TopBar.test.tsx` | 导出按钮回调格式;无可导出题禁用;撤销/重做可用性;设置弹层:页脚署名 / 题目留白滑块(0-80)/ 去白边回调;**署名字号:未填署名时禁用、修改回调且夹到 6-24**;未上传时不渲染工具区 |
 
 > `PageCanvas` 重度依赖 `react-konva` + Canvas,jsdom 难以稳定测;暂以视觉手测为主,后续可考虑 Playwright e2e。
 

@@ -9,8 +9,9 @@ interface Props {
   onRedo: () => void;
   autoTrim: boolean;
   onAutoTrimChange: (value: boolean) => void;
-  margin: number;
-  onMarginChange: (value: number) => void;
+  /** 题目下方留白,占页高百分比(0-80),与后端 `bottom_space` 对齐。 */
+  bottomSpace: number;
+  onBottomSpaceChange: (value: number) => void;
   footerText: string;
   onFooterTextChange: (value: string) => void;
   /** 署名字号(pt),与后端 `footer_size` 对齐(6-24)。 */
@@ -25,7 +26,7 @@ interface Props {
 /**
  * 顶栏:品牌 + 撤销/重做 + 导出设置(弹出面板)+ 导出按钮。
  *
- * 导出设置(去白边 / 页边距 / 页脚署名)集中放在一个小弹层里,
+ * 导出设置(去白边 / 题目留白 / 页脚署名)集中放在一个小弹层里,
  * 避免常驻表单挤占画布空间 —— 这些参数一次设置后很少反复改。
  */
 export default function TopBar({
@@ -36,8 +37,8 @@ export default function TopBar({
   onRedo,
   autoTrim,
   onAutoTrimChange,
-  margin,
-  onMarginChange,
+  bottomSpace,
+  onBottomSpaceChange,
   footerText,
   onFooterTextChange,
   footerSize,
@@ -116,20 +117,21 @@ export default function TopBar({
                   <span>自动去除区域四周白边</span>
                 </label>
                 <label
-                  className="settings-row"
-                  title="导出 PDF / PPTX 时,题区与纸面四边之间留出的空白(pt)。1 pt ≈ 0.353 mm"
+                  className="settings-row settings-col"
+                  title="题目下方至少预留的空白,占页高的百分比;调大后题目会缩小,留出作答空间。左右和顶部固定留白"
                 >
-                  <span>页边距(pt)</span>
+                  <span className="settings-range-head">
+                    <span>题目留白</span>
+                    <span className="settings-range-value">{bottomSpace}%</span>
+                  </span>
                   <input
-                    type="number"
+                    type="range"
                     min={0}
-                    max={120}
-                    step={2}
-                    value={margin}
-                    aria-label="页边距"
-                    onChange={(e) =>
-                      onMarginChange(Math.max(0, Math.min(120, Number(e.target.value) || 0)))
-                    }
+                    max={80}
+                    step={1}
+                    value={bottomSpace}
+                    aria-label="题目留白"
+                    onChange={(e) => onBottomSpaceChange(Number(e.target.value))}
                   />
                 </label>
                 <label className="settings-row settings-col" title="每页左下角的灰字署名;留空则不加">

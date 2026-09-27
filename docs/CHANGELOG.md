@@ -3,6 +3,10 @@
 > 倒序排列,每次代码改动都要在顶部追加一行(日期 + 简述)。  
 > 体量较大的改动建议附 commit / PR 链接。
 
+## 2026-09-27
+
+- **「页边距」改为「题目留白」滑块**:`ExportRequest.margin`(四周 pt)替换为 `bottom_space`(0-80,默认 5,单位为页高百分比);左 / 右 / 上固定留白 28pt(`pdf_service.PAGE_MARGIN_PT`,PPTX 共用),调大 `bottom_space` 时题目等比缩小、下方留出作答空间。前端「导出设置」的数字输入框换成 range 滑块并实时显示百分比。测试:后端新增"50% 留白时内容位于上半页"用例与 bottom_space 越界用例,前端 TopBar 改测滑块;文档同步 `api.md`、`architecture.md`、`testing.md`、`README.md`。
+
 ## 2026-07-09
 
 - **页脚署名支持自定义字号 `footer_size`**:`ExportRequest` 新增 6-24pt(默认 8)字段;PDF 基线固定离页底 12pt、字号向上生长,PPTX 文本框高度随字号增长且底部锚定;前端「导出设置」新增"署名字号"输入(未填署名时禁用)。测试:后端 +3(schema 默认/越界、PDF span 字号、PPTX run 字号)→ 61 passed,前端 +2 → 40 passed;文档同步 `api.md`、`architecture.md`、`testing.md`。

@@ -51,7 +51,12 @@ class Question(BaseModel):
 
 class ExportRequest(BaseModel):
     format: str = Field("pdf", pattern=r"^(pdf|pptx)$")
-    margin: float = Field(28.0, ge=0, le=120, description="页面四周留白(pt)")
+    bottom_space: float = Field(
+        5.0,
+        ge=0,
+        le=80,
+        description="题目下方至少预留的留白,占页高的百分比;左 / 右 / 上固定留白 28pt。",
+    )
     auto_trim: bool = Field(
         True,
         description="是否自动去除每个区域四周的白边(像素扫描内容包围盒,默认开启)。",

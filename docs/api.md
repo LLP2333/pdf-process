@@ -45,7 +45,7 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `format` | `"pdf"` \| `"pptx"` | 导出格式 |
-| `margin` | float (0–120) | 页面四周留白(pt),PDF 与 PPTX 共用 |
+| `bottom_space` | float (0–80,默认 5) | 题目下方至少预留的留白,占页高百分比;左 / 右 / 上固定 28pt。PDF 与 PPTX 共用 |
 | `auto_trim` | bool,默认 `true` | 是否自动去除每个区域**四周**(x/y 双向)的白边(像素扫描内容包围盒) |
 | `footer_text` | string?,≤50 字符 | 可选页脚署名:每页 / 每张幻灯片左下角灰字;留空不加 |
 | `footer_size` | float (6–24),默认 `8` | 署名字号(pt);仅在 `footer_text` 非空时生效 |
@@ -155,7 +155,7 @@ curl http://localhost:8000/api/health
 ```json
 {
   "format": "pdf",
-  "margin": 28,
+  "bottom_space": 5,
   "auto_trim": true,
   "footer_text": "整理:张老师",
   "footer_size": 10,

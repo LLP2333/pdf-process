@@ -33,7 +33,8 @@ export type ExportFormat = "pdf" | "pptx";
 
 export interface ExportRequest {
   format: ExportFormat;
-  margin: number;
+  /** 题目下方至少预留的留白,占页高百分比(0-80);左 / 右 / 上固定 28pt。 */
+  bottom_space: number;
   auto_trim: boolean;
   /** 可选页脚署名:导出的每页/每张幻灯片左下角灰字;留空不加。 */
   footer_text?: string;

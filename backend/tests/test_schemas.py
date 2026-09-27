@@ -16,12 +16,12 @@ def _region(**overrides) -> Region:
 
 def test_export_format_must_be_pdf_or_pptx() -> None:
     with pytest.raises(ValidationError):
-        ExportRequest(format="docx", margin=10, questions=[])
+        ExportRequest(format="docx", bottom_space=10, questions=[])
 
 
 def test_questions_cannot_be_empty() -> None:
     with pytest.raises(ValidationError):
-        ExportRequest(format="pdf", margin=10, questions=[])
+        ExportRequest(format="pdf", bottom_space=10, questions=[])
 
 
 def test_regions_cannot_be_empty() -> None:
@@ -46,11 +46,12 @@ def test_region_accepts_any_diagonal_order() -> None:
     assert region.x1 == 200 and region.y2 == 100
 
 
-def test_margin_bounds() -> None:
+@pytest.mark.parametrize("value", [-1, 81])
+def test_bottom_space_bounds(value: float) -> None:
     with pytest.raises(ValidationError):
         ExportRequest(
             format="pdf",
-            margin=999,
+            bottom_space=value,
             questions=[Question(no=1, regions=[_region()])],
         )
 
@@ -59,7 +60,7 @@ def test_auto_trim_defaults_to_true() -> None:
     """auto_trim 默认 True,前端不传时仍按"去白边"导出;footer 默认不加、字号 8pt。"""
     req = ExportRequest(
         format="pdf",
-        margin=28,
+        bottom_space=5,
         questions=[Question(no=1, regions=[_region()])],
     )
     assert req.auto_trim is True
@@ -73,7 +74,7 @@ def test_footer_size_bounds() -> None:
         with pytest.raises(ValidationError):
             ExportRequest(
                 format="pdf",
-                margin=28,
+                bottom_space=5,
                 footer_size=bad_size,
                 questions=[Question(no=1, regions=[_region()])],
             )
@@ -84,7 +85,7 @@ def test_footer_text_max_length_50() -> None:
     with pytest.raises(ValidationError):
         ExportRequest(
             format="pdf",
-            margin=28,
+            bottom_space=5,
             footer_text="很" * 51,
             questions=[Question(no=1, regions=[_region()])],
         )
@@ -94,7 +95,7 @@ def test_footer_text_accepts_chinese() -> None:
     """正例:中文署名 ≤50 字符合法。"""
     req = ExportRequest(
         format="pdf",
-        margin=28,
+        bottom_space=5,
         footer_text="命题人:张老师",
         questions=[Question(no=1, regions=[_region()])],
     )

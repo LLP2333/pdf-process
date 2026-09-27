@@ -22,7 +22,7 @@ def test_build_pptx_creates_one_slide_per_question(sample_pdf: Path, tmp_path: P
         Question(no=1, regions=[_region(0, 120, 300)]),
         Question(no=2, regions=[_region(1, 120, 240)]),
     ]
-    made = ppt_service.build_pptx({DOC_A: sample_pdf}, out, questions, margin_pt=28.0)
+    made = ppt_service.build_pptx({DOC_A: sample_pdf}, out, questions, bottom_space=5.0)
     assert made == 2
 
     prs = Presentation(out.as_posix())
@@ -41,7 +41,7 @@ def test_build_pptx_skips_empty_questions(sample_pdf: Path, tmp_path: Path) -> N
         Question(no=1, regions=[_region(99, 0, 10)]),  # 全部越界
         Question(no=2, regions=[_region(0, 100, 200)]),
     ]
-    made = ppt_service.build_pptx({DOC_A: sample_pdf}, out, questions, margin_pt=28.0)
+    made = ppt_service.build_pptx({DOC_A: sample_pdf}, out, questions, bottom_space=5.0)
     assert made == 1
 
 
@@ -51,7 +51,7 @@ def test_build_pptx_adds_footer_textbox(sample_pdf: Path, tmp_path: Path) -> Non
 
     out_with = tmp_path / "with_footer.pptx"
     made = ppt_service.build_pptx(
-        {DOC_A: sample_pdf}, out_with, questions, margin_pt=28.0, footer_text="命题人:张老师"
+        {DOC_A: sample_pdf}, out_with, questions, bottom_space=5.0, footer_text="命题人:张老师"
     )
     assert made == 1
     prs = Presentation(out_with.as_posix())
@@ -64,7 +64,7 @@ def test_build_pptx_adds_footer_textbox(sample_pdf: Path, tmp_path: Path) -> Non
     assert "命题人:张老师" in texts
 
     out_without = tmp_path / "no_footer.pptx"
-    ppt_service.build_pptx({DOC_A: sample_pdf}, out_without, questions, margin_pt=28.0)
+    ppt_service.build_pptx({DOC_A: sample_pdf}, out_without, questions, bottom_space=5.0)
     prs = Presentation(out_without.as_posix())
     assert all(
         not shape.has_text_frame or not shape.text_frame.text
@@ -78,7 +78,7 @@ def test_build_pptx_footer_size_controls_font_size(sample_pdf: Path, tmp_path: P
     questions = [Question(no=1, regions=[_region(0, 120, 300)])]
     out = tmp_path / "footer_14.pptx"
     made = ppt_service.build_pptx(
-        {DOC_A: sample_pdf}, out, questions, margin_pt=28.0, footer_text="张老师", footer_size=14.0
+        {DOC_A: sample_pdf}, out, questions, bottom_space=5.0, footer_text="张老师", footer_size=14.0
     )
     assert made == 1
 

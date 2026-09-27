@@ -11,7 +11,7 @@
 - `POST /api/upload`               上传 PDF,返回 doc_id 与每页预览 PNG 的 URL / 尺寸
 - `GET  /api/pages/{doc_id}/{name}` 静态返回上一接口产生的预览 PNG
 - `POST /api/preview`              单题实时预览(区域自带 doc_id,可跨文档;纵向拼接成单张 PNG)
-- `POST /api/export`               按 {format, margin, auto_trim, footer_text, questions} 矢量裁剪并下载产物
+- `POST /api/export`               按 {format, bottom_space, auto_trim, footer_text, questions} 矢量裁剪并下载产物
 - `POST /api/auto_detect/{doc_id}`  判定文字版 / 扫描件,顺带尝试识别题号给出草稿分割线
 """
 from __future__ import annotations
@@ -265,7 +265,7 @@ def preview(payload: PreviewRequest) -> Response:
     "/api/export",
     summary="按切分方案导出 PDF / PPTX",
     description=(
-        "接收 `{format, margin, auto_trim, footer_text, questions}`;`questions` 中每题由若干 "
+        "接收 `{format, bottom_space, auto_trim, footer_text, questions}`;`questions` 中每题由若干 "
         "`Region` 组成,每个区域用 PDF 原始坐标(pt)给出 `(doc_id, page, x1, y1, x2, y2)`,"
         "可跨页、跨栏、跨多份已上传的文档组合。"
         "`auto_trim=true` 时,后端会在裁剪前对每个区域做像素扫描去掉四周白边;"
@@ -305,7 +305,7 @@ def export(payload: ExportRequest) -> FileResponse:
                 doc_paths,
                 out_path,
                 payload.questions,
-                payload.margin,
+                payload.bottom_space,
                 auto_trim=payload.auto_trim,
                 footer_text=payload.footer_text,
                 footer_size=payload.footer_size,
@@ -321,7 +321,7 @@ def export(payload: ExportRequest) -> FileResponse:
                 doc_paths,
                 out_path,
                 payload.questions,
-                payload.margin,
+                payload.bottom_space,
                 auto_trim=payload.auto_trim,
                 footer_text=payload.footer_text,
                 footer_size=payload.footer_size,

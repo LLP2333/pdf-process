@@ -11,8 +11,8 @@ function renderTopBar(overrides: Partial<Parameters<typeof TopBar>[0]> = {}) {
     onRedo: vi.fn(),
     autoTrim: true,
     onAutoTrimChange: vi.fn(),
-    margin: 28,
-    onMarginChange: vi.fn(),
+    bottomSpace: 5,
+    onBottomSpaceChange: vi.fn(),
     footerText: "",
     onFooterTextChange: vi.fn(),
     footerSize: 8,
@@ -48,7 +48,7 @@ describe("TopBar", () => {
     expect(props.onUndo).toHaveBeenCalled();
   });
 
-  it("导出设置弹层:修改页脚署名与页边距会触发回调", () => {
+  it("导出设置弹层:修改页脚署名与题目留白会触发回调", () => {
     const props = renderTopBar();
     fireEvent.click(screen.getByRole("button", { name: "导出设置" }));
 
@@ -56,9 +56,10 @@ describe("TopBar", () => {
     fireEvent.change(footerInput, { target: { value: "整理:李老师" } });
     expect(props.onFooterTextChange).toHaveBeenCalledWith("整理:李老师");
 
-    const marginInput = screen.getByRole("spinbutton", { name: "页边距" });
-    fireEvent.change(marginInput, { target: { value: "999" } });
-    expect(props.onMarginChange).toHaveBeenCalledWith(120);
+    const spaceSlider = screen.getByRole("slider", { name: "题目留白" });
+    expect(spaceSlider).toHaveAttribute("max", "80");
+    fireEvent.change(spaceSlider, { target: { value: "40" } });
+    expect(props.onBottomSpaceChange).toHaveBeenCalledWith(40);
 
     fireEvent.click(screen.getByRole("checkbox"));
     expect(props.onAutoTrimChange).toHaveBeenCalledWith(false);

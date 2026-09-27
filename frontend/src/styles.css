@@ -249,6 +249,21 @@ kbd {
   font-size: 13px;
 }
 
+.settings-range-head {
+  display: flex;
+  justify-content: space-between;
+}
+
+.settings-range-value {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-col input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 /* ------------------------------ 首屏 ------------------------------ */
 
 .hero {

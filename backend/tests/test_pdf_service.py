@@ -43,7 +43,7 @@ def test_build_pdf_creates_one_page_per_question(sample_pdf: Path, tmp_path: Pat
         Question(no=1, regions=[_region(0, 120, 300)]),
         Question(no=2, regions=[_region(0, 300, 500), _region(1, 120, 240)]),
     ]
-    made = pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, margin=28.0)
+    made = pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, bottom_space=5.0)
 
     assert made == 2
     assert out.exists()
@@ -57,6 +57,22 @@ def test_build_pdf_creates_one_page_per_question(sample_pdf: Path, tmp_path: Pat
         doc.close()
 
 
+def test_build_pdf_bottom_space_reserves_lower_part(sample_pdf: Path, tmp_path: Path) -> None:
+    """题目留白 50%:高度受限的整页题目应被压缩到页面上半部分,下半部分空白。"""
+    out = tmp_path / "out.pdf"
+    questions = [Question(no=1, regions=[_region(0, 0, 842)])]
+    pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, bottom_space=50.0, auto_trim=False)
+
+    doc = fitz.open(out.as_posix())
+    try:
+        page = doc[0]
+        bottoms = [b[3] for b in page.get_text("blocks")]
+        assert bottoms
+        assert max(bottoms) <= page.rect.height * 0.5 + 1
+    finally:
+        doc.close()
+
+
 def test_build_pdf_ignores_empty_regions(sample_pdf: Path, tmp_path: Path) -> None:
     """高度 < 1pt 视为空区域;page 越界、doc_id 未知也应被丢弃。"""
     out = tmp_path / "out.pdf"
@@ -66,7 +82,7 @@ def test_build_pdf_ignores_empty_regions(sample_pdf: Path, tmp_path: Path) -> No
         Question(no=3, regions=[_region(0, 10, 20, doc_id="ffffffffffffffff")]),  # doc 未知
         Question(no=4, regions=[_region(0, 100, 200)]),  # 正常
     ]
-    made = pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, margin=28.0)
+    made = pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, bottom_space=5.0)
     assert made == 1
 
 
@@ -85,7 +101,7 @@ def test_build_pdf_combines_regions_from_two_docs(
         ),
     ]
     made = pdf_service.build_pdf(
-        {DOC_A: sample_pdf, DOC_B: second_pdf}, out, questions, margin=28.0, auto_trim=False
+        {DOC_A: sample_pdf, DOC_B: second_pdf}, out, questions, bottom_space=5.0, auto_trim=False
     )
     assert made == 1
 
@@ -190,8 +206,8 @@ def test_horizontal_clip_excludes_content_outside_x_range(sample_pdf: Path, tmp_
     blank_q = [Question(no=1, regions=[_region(0, 100, 300, x1=0, x2=60)])]
     text_q = [Question(no=1, regions=[_region(0, 100, 300, x1=0, x2=595)])]
 
-    assert pdf_service.build_pdf({DOC_A: sample_pdf}, out_blank, blank_q, margin=28.0, auto_trim=False) == 1
-    assert pdf_service.build_pdf({DOC_A: sample_pdf}, out_text, text_q, margin=28.0, auto_trim=False) == 1
+    assert pdf_service.build_pdf({DOC_A: sample_pdf}, out_blank, blank_q, bottom_space=5.0, auto_trim=False) == 1
+    assert pdf_service.build_pdf({DOC_A: sample_pdf}, out_text, text_q, bottom_space=5.0, auto_trim=False) == 1
 
     doc_blank = fitz.open(out_blank.as_posix())
     doc_text = fitz.open(out_text.as_posix())
@@ -212,7 +228,7 @@ def test_build_pdf_renders_footer_text(sample_pdf: Path, tmp_path: Path) -> None
 
     out_with = tmp_path / "with_footer.pdf"
     made = pdf_service.build_pdf(
-        {DOC_A: sample_pdf}, out_with, questions, margin=28.0, footer_text="命题人:张老师"
+        {DOC_A: sample_pdf}, out_with, questions, bottom_space=5.0, footer_text="命题人:张老师"
     )
     assert made == 2
     doc = fitz.open(out_with.as_posix())
@@ -223,7 +239,7 @@ def test_build_pdf_renders_footer_text(sample_pdf: Path, tmp_path: Path) -> None
         doc.close()
 
     out_without = tmp_path / "no_footer.pdf"
-    pdf_service.build_pdf({DOC_A: sample_pdf}, out_without, questions, margin=28.0)
+    pdf_service.build_pdf({DOC_A: sample_pdf}, out_without, questions, bottom_space=5.0)
     doc = fitz.open(out_without.as_posix())
     try:
         assert "命题人" not in doc[0].get_text("text")
@@ -236,7 +252,7 @@ def test_build_pdf_footer_size_controls_font_size(sample_pdf: Path, tmp_path: Pa
     questions = [Question(no=1, regions=[_region(0, 120, 300)])]
     out = tmp_path / "footer_14.pdf"
     made = pdf_service.build_pdf(
-        {DOC_A: sample_pdf}, out, questions, margin=28.0, footer_text="张老师", footer_size=14.0
+        {DOC_A: sample_pdf}, out, questions, bottom_space=5.0, footer_text="张老师", footer_size=14.0
     )
     assert made == 1
 

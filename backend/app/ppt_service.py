@@ -58,7 +58,7 @@ def build_pptx(
     doc_paths: dict[str, Path],
     out_path: Path,
     questions: list[Question],
-    margin_pt: float,
+    bottom_space: float,
     auto_trim: bool = True,
     footer_text: str | None = None,
     footer_size: float = FOOTER_DEFAULT_FONT_PT,
@@ -69,8 +69,8 @@ def build_pptx(
         doc_paths: `doc_id -> 源 PDF 路径`,支持一次导出引用多份文档。
         out_path: 目标 PPTX,父目录会自动创建。
         questions: 用户给的切分方案(`no` + 多区域)。
-        margin_pt: 每张幻灯片四周留白(pt),与 PDF 导出共用同一参数。
-            内部按 1in = 72pt 换算为英寸。
+        bottom_space: 题目下方至少预留的留白,占幻灯片高度的百分比(0-80),
+            与 PDF 导出共用同一参数;左 / 右 / 上固定留 `pdf_service.PAGE_MARGIN_PT`。
         auto_trim: 是否自动去除区域四周白边(与 PDF 导出共用同一开关)。
         footer_text: 可选页脚署名,每张幻灯片左下角灰字。
         footer_size: 署名字号(pt),仅在 footer_text 非空时使用。
@@ -84,9 +84,9 @@ def build_pptx(
     blank_layout = prs.slide_layouts[6]  # 空白版式
 
     # 把 PDF 用 pt 表示的留白换算到英寸(1in = 72pt)
-    margin_in = margin_pt / 72.0
+    margin_in = pdf_service.PAGE_MARGIN_PT / 72.0
     avail_w_in = SLIDE_W_IN - 2 * margin_in
-    avail_h_in = SLIDE_H_IN - 2 * margin_in
+    avail_h_in = SLIDE_H_IN * (1 - bottom_space / 100) - margin_in
 
     made = 0
     for q in sorted(questions, key=lambda x: x.no):

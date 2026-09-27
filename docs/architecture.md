@@ -58,7 +58,7 @@
  │                  │   {question(regions 带 doc_id)}   │ 去白边 → 拼接 PNG      │
  │                  │ ◀────── image/png ─────────────── │                        │
  │ 点「导出 PDF」──▶│ POST /api/export                  │ 多文档矢量裁剪 / 拼图  │
- │                  │  {format, margin, auto_trim,      │ + 可选页脚署名         │
+ │                  │  {format, bottom_space, auto_trim,      │ + 可选页脚署名         │
  │                  │   footer_text, questions}         │ 写 outputs/.../export.*│
  │ 浏览器自动下载 ◀ │ ◀── application/pdf | pptx ────── │                        │
 ```
@@ -70,7 +70,7 @@
 3. **多文档组卷**:每份上传的 PDF 独立 `doc_id`;`/api/preview`、`/api/export` 是文档无关路由,后端把请求体里引用到的所有 doc_id 逐个过白名单(`^[a-f0-9]{16}$` + 存在性),任一失效整体 404。导出产物落在第一个被引用 doc 的 outputs 目录,由 `storage.maintenance()` 统一回收。
 4. **PDF 导出走矢量**:`show_pdf_page(target_rect, src_doc, page, clip=clip)`,公式 / 表格 / 图形 100% 保留原貌,一题一页,横版 A4,题区置顶、区域各自居中。
 5. **自动去白边升级为 x/y 双向**:`auto_trim=true`(默认)时,对每个区域在 1x 灰度像素图上用 PIL `point(阈值).getbbox()`(C 实现)一次拿到内容最小包围盒,四周各留 2pt 安全边。框选模型下用户常框住"半栏",横向白边同样需要收紧。同一开关同时作用于 PDF / PPTX / 预览,所见即所得。旧版题目级 `trim`(二次裁剪滑块)已废弃 —— 框本身就是裁剪边界。
-6. **页脚署名 `footer_text` + 字号 `footer_size`**:导出请求可选字段(文本 ≤50 字符,字号 6-24pt 默认 8);PDF 用 PyMuPDF 内置 CJK 字体 `china-s` 在每页左下角画灰字,基线固定在 `(18, H-12)`(默认 helv 不含中文字形会乱码);PPTX 加同位置文本框,高度随字号增长且底部锚定。位置固定不随 margin 变化,保证多页署名对齐、字号变大时向上生长不出界。
+6. **页脚署名 `footer_text` + 字号 `footer_size`**:导出请求可选字段(文本 ≤50 字符,字号 6-24pt 默认 8);PDF 用 PyMuPDF 内置 CJK 字体 `china-s` 在每页左下角画灰字,基线固定在 `(18, H-12)`(默认 helv 不含中文字形会乱码);PPTX 加同位置文本框,高度随字号增长且底部锚定。位置固定不随题目留白变化,保证多页署名对齐、字号变大时向上生长不出界。
 7. **前端状态 = `EditorQuestion[]` + 撤销栈**:`editorState.ts` 全部纯函数(增删区域 / 移动缩放 / 重排 / 排除 / 文档级联清理 / 导出前重编号),`History{past, present, future}` 存不可变快照,上限 50 步。拖动/缩放/方向键长按走 `replacePresent`(不入栈),手势结束 `commitFrom(手势前快照)`一次入栈 —— 一次拖动只占一步撤销。文档被移除时重置历史,避免 undo 复活引用已删文档的孤儿区域。
 8. **新题按视觉顺序插入**:画完新框按 (文档序, 页, y, x) 找插入位,题号始终符合试卷阅读顺序;用户也可在右栏拖拽卡片手动重排,导出前 `buildExportQuestions` 统一过滤(excluded / 宽高 < 4pt / 文档已删)并把 `no` 重排为 1..N。
 9. **右栏常驻实时预览(替代旧预览弹窗)**:每题卡片直接展示 `/api/preview` 的拼接 PNG,300ms 防抖 + 串行请求 + fingerprint 比对丢弃过期响应;卡片支持拖拽重排、勾选"是否导出"、删除、单击跳转画布(自动切换文档并滚动到对应页)。
@@ -99,7 +99,7 @@
 | `editorState.ts` | 纯函数状态机:画框/追加/移动/删除/重排/排除/级联清理/`buildExportQuestions`/`draftQuestionsFromDividers` + History |
 | `api.ts` | 唯一对接后端的位置,所有 fetch / 错误抽取在此 |
 | `palette.ts` | 题目循环配色,画布与面板共用 |
-| `TopBar` | 撤销/重做按钮 + 导出设置弹层(去白边 / 页边距 / 页脚署名)+ 导出 PDF/PPTX 按钮 |
+| `TopBar` | 撤销/重做按钮 + 导出设置弹层(去白边 / 题目留白滑块 / 页脚署名)+ 导出 PDF/PPTX 按钮 |
 | `DocumentRail` | 多文档上传(逐份调 `/api/upload`)、切换画布文档、移除文档、Word 引导文案 |
 | `PageCanvas` | 单页画布:拖拽画框(Shift=追加)、选中/移动、Transformer 八向缩放、边界 clamp;手势结束才 commit |
 | `QuestionPanel` | 每题实时缩略图(防抖+fingerprint)、拖拽重排、"是否导出"勾选、删除、跳转画布 |

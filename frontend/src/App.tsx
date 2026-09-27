@@ -54,7 +54,7 @@ export default function App() {
   const [shiftDown, setShiftDown] = useState(false);
 
   const [autoTrim, setAutoTrim] = useState(true);
-  const [margin, setMargin] = useState(28);
+  const [bottomSpace, setBottomSpace] = useState(5);
   const [footerText, setFooterText] = useState("");
   const [footerSize, setFooterSize] = useState(8);
 
@@ -400,7 +400,7 @@ export default function App() {
       try {
         const { blob, filename, count } = await exportFile({
           format,
-          margin,
+          bottom_space: bottomSpace,
           auto_trim: autoTrim,
           footer_text: footerText.trim() || undefined,
           footer_size: footerSize,
@@ -422,7 +422,7 @@ export default function App() {
         setExportBusy(null);
       }
     },
-    [exportBusy, exportQuestions, margin, autoTrim, footerText, footerSize, docs],
+    [exportBusy, exportQuestions, bottomSpace, autoTrim, footerText, footerSize, docs],
   );
 
   useEffect(() => {
@@ -467,8 +467,8 @@ export default function App() {
         onRedo={() => setHistory(redo)}
         autoTrim={autoTrim}
         onAutoTrimChange={setAutoTrim}
-        margin={margin}
-        onMarginChange={setMargin}
+        bottomSpace={bottomSpace}
+        onBottomSpaceChange={setBottomSpace}
         footerText={footerText}
         onFooterTextChange={setFooterText}
         footerSize={footerSize}

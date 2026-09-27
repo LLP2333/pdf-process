@@ -66,7 +66,7 @@ describe("api.ts", () => {
     vi.stubGlobal("fetch", fetchMock);
     const payload: ExportRequest = {
       format: "pdf",
-      margin: 28,
+      bottom_space: 5,
       auto_trim: true,
       footer_text: "整理:张老师",
       footer_size: 14,
@@ -90,7 +90,7 @@ describe("api.ts", () => {
     );
     const r = await exportFile({
       format: "pptx",
-      margin: 28,
+      bottom_space: 5,
       auto_trim: true,
       questions: [question()],
     });
@@ -104,7 +104,7 @@ describe("api.ts", () => {
     );
     const r = await exportFile({
       format: "pdf",
-      margin: 28,
+      bottom_space: 5,
       auto_trim: true,
       source_name: "2024期末数学.pdf",
       questions: [question()],
@@ -120,7 +120,7 @@ describe("api.ts", () => {
     await expect(
       exportFile({
         format: "pdf",
-        margin: 28,
+        bottom_space: 5,
         auto_trim: true,
         questions: [question()],
       })
