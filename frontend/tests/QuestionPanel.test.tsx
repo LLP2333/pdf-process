@@ -50,6 +50,9 @@ describe("QuestionPanel", () => {
         questions={[]}
         docs={docs}
         autoTrim
+        bottomSpace={20}
+        footerText=""
+        footerSize={8}
         selection={null}
         onSelectQuestion={noop}
         onToggleExcluded={noop}
@@ -74,6 +77,9 @@ describe("QuestionPanel", () => {
         questions={[q1, q2]}
         docs={docs}
         autoTrim
+        bottomSpace={20}
+        footerText=""
+        footerSize={8}
         selection={null}
         onSelectQuestion={noop}
         onToggleExcluded={noop}
@@ -103,6 +109,9 @@ describe("QuestionPanel", () => {
         questions={[q1]}
         docs={docs}
         autoTrim
+        bottomSpace={20}
+        footerText=""
+        footerSize={8}
         selection={null}
         onSelectQuestion={onSelect}
         onToggleExcluded={onToggle}
@@ -135,6 +144,9 @@ describe("QuestionPanel", () => {
         questions={[orphan]}
         docs={docs}
         autoTrim
+        bottomSpace={20}
+        footerText=""
+        footerSize={8}
         selection={null}
         onSelectQuestion={noop}
         onToggleExcluded={noop}
@@ -146,5 +158,36 @@ describe("QuestionPanel", () => {
       expect(screen.getByText(/区域太小或已失效/)).toBeInTheDocument(),
     );
     expect(previewQuestion).not.toHaveBeenCalled();
+  });
+
+  it("预览方式可在 裁剪 / PDF / PPT 间切换,默认 PDF 页面预览", async () => {
+    const { container } = render(
+      <QuestionPanel
+        questions={[makeQuestion("q1")]}
+        docs={docs}
+        autoTrim
+        bottomSpace={20}
+        footerText="张老师"
+        footerSize={8}
+        selection={null}
+        onSelectQuestion={noop}
+        onToggleExcluded={noop}
+        onDeleteQuestion={noop}
+        onMoveQuestion={noop}
+      />,
+    );
+    await waitFor(() => expect(screen.getByAltText(/题预览/)).toBeInTheDocument(), {
+      timeout: 2000,
+    });
+    expect(screen.getByRole("button", { name: "PDF" })).toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".page-preview")).not.toBeNull();
+    expect(screen.getByText("张老师")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "裁剪" }));
+    expect(container.querySelector(".page-preview")).toBeNull();
+    expect(screen.getByAltText(/题预览/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "PPT" }));
+    expect(container.querySelector(".page-preview")).not.toBeNull();
   });
 });

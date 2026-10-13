@@ -563,6 +563,9 @@ export default function App() {
             questions={questions}
             docs={docs}
             autoTrim={autoTrim}
+            bottomSpace={bottomSpace}
+            footerText={footerText}
+            footerSize={footerSize}
             selection={selection}
             onSelectQuestion={handleSelectQuestion}
             onToggleExcluded={handleToggleExcluded}

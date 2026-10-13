@@ -31,7 +31,7 @@
 │   │       ├── TopBar.tsx         # 品牌 + 撤销重做 + 导出设置弹层 + 导出按钮
 │   │       ├── DocumentRail.tsx   # 左栏:多文档上传/切换/移除 + Word 引导
 │   │       ├── PageCanvas.tsx     # 中央画布:框选/移动/缩放/Shift 追加(Konva)
-│   │       ├── QuestionPanel.tsx  # 右栏:实时缩略图 + 拖拽重排 + 排除/删除
+│   │       ├── QuestionPanel.tsx  # 右栏:实时缩略图(裁剪 / PDF / PPT 页面预览)+ 拖拽重排 + 排除/删除
 │   │       └── UploadPanel.tsx    # 首屏多文件上传
 │   ├── tests/                 # vitest:editorState / api / 组件
 │   └── ...
@@ -102,7 +102,7 @@
 | `TopBar` | 撤销/重做按钮 + 导出设置弹层(去白边 / 题目留白滑块 / 页脚署名)+ 导出 PDF/PPTX 按钮 |
 | `DocumentRail` | 多文档上传(逐份调 `/api/upload`)、切换画布文档、移除文档、Word 引导文案 |
 | `PageCanvas` | 单页画布:拖拽画框(Shift=追加)、选中/移动、Transformer 八向缩放、边界 clamp;手势结束才 commit |
-| `QuestionPanel` | 每题实时缩略图(防抖+fingerprint)、拖拽重排、"是否导出"勾选、删除、跳转画布 |
+| `QuestionPanel` | 每题实时缩略图(防抖+fingerprint),可切换「裁剪 / PDF / PPT」:页面预览由 `exportLayout.ts` 按导出算法本地排版,调「题目留白」/ 署名即时生效、不请求后端;拖拽重排、"是否导出"勾选、删除、跳转画布 |
 | `UploadPanel` | 首屏多文件上传(与 DocumentRail 共用 App 的上传逻辑) |
 
 ## 扩展点

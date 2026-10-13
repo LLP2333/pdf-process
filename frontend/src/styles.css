@@ -646,6 +646,57 @@ kbd {
   font-size: 12px;
 }
 
+.qpanel-view {
+  margin: 0 12px 8px;
+  display: flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.qpanel-view-btn {
+  appearance: none;
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.qpanel-view-btn.on {
+  background: var(--panel);
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.page-preview {
+  position: relative;
+  width: calc(100% - 16px);
+  margin: 8px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--panel-border), var(--shadow-card);
+  container-type: inline-size;
+  overflow: hidden;
+}
+
+.qcard-thumb .page-preview img {
+  position: absolute;
+  object-fit: fill;
+}
+
+.page-preview-footer {
+  position: absolute;
+  bottom: 1.5%;
+  color: #8c8c8c;
+  white-space: nowrap;
+  line-height: 1;
+}
+
 .qpanel-body {
   flex: 1;
   overflow-y: auto;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { previewQuestion } from "../api";
 import { buildPreviewQuestion } from "../editorState";
+import { FOOTER_LEFT_PT, PAGE_SIZES, layoutOnPage, type PageFormat } from "../exportLayout";
 import { questionColor } from "../palette";
 import type { DocEntry, EditorQuestion, Selection } from "../types";
 
@@ -8,12 +9,25 @@ interface Props {
   questions: EditorQuestion[];
   docs: DocEntry[];
   autoTrim: boolean;
+  /** 以下三项仅用于页面预览,与导出设置同源。 */
+  bottomSpace: number;
+  footerText: string;
+  footerSize: number;
   selection: Selection | null;
   onSelectQuestion: (questionId: string) => void;
   onToggleExcluded: (questionId: string) => void;
   onDeleteQuestion: (questionId: string) => void;
   onMoveQuestion: (fromIndex: number, toIndex: number) => void;
 }
+
+/** 缩略图显示方式:裁剪原图,或按导出排版放到 PDF / PPT 页面上。 */
+type ViewMode = "crop" | PageFormat;
+
+const VIEW_MODES: { mode: ViewMode; label: string; title: string }[] = [
+  { mode: "crop", label: "裁剪", title: "只看裁剪结果,便于检查框选范围" },
+  { mode: "pdf", label: "PDF", title: "按导出排版预览横版 A4 页面" },
+  { mode: "pptx", label: "PPT", title: "按导出排版预览 16:9 幻灯片" },
+];
 
 type Status = "idle" | "loading" | "ok" | "empty" | "error";
 
@@ -30,6 +44,7 @@ const DEBOUNCE_MS = 300;
  * 右侧题目面板:每题一张卡片,常驻实时渲染缩略图(替代旧版预览弹窗)。
  *
  * - 缩略图 = 后端 `/api/preview` 的裁剪结果,所见即所得(含自动去白边);
+ *   可切换为 PDF / PPT 页面预览,排版由前端按导出算法本地计算,调滑块即时生效;
  * - 卡片可拖拽重排(导出顺序)、勾选"导出"、删除、单击跳转画布;
  * - 预览请求串行 + 防抖 + fingerprint 比对,拖动画布中的框不会打爆后端。
  */
@@ -37,12 +52,16 @@ export default function QuestionPanel({
   questions,
   docs,
   autoTrim,
+  bottomSpace,
+  footerText,
+  footerSize,
   selection,
   onSelectQuestion,
   onToggleExcluded,
   onDeleteQuestion,
   onMoveQuestion,
 }: Props) {
+  const [viewMode, setViewMode] = useState<ViewMode>("pdf");
   const [entries, setEntries] = useState<Record<string, Entry>>({});
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -138,6 +157,19 @@ export default function QuestionPanel({
             ? `${questions.length} 题`
             : `${includedCount} / ${questions.length} 题将导出`}
         </span>
+      </div>
+      <div className="qpanel-view" role="group" aria-label="预览方式">
+        {VIEW_MODES.map(({ mode, label, title }) => (
+          <button
+            key={mode}
+            className={"qpanel-view-btn" + (viewMode === mode ? " on" : "")}
+            aria-pressed={viewMode === mode}
+            title={title}
+            onClick={() => setViewMode(mode)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="qpanel-body">
         {questions.length === 0 && (
@@ -238,9 +270,19 @@ export default function QuestionPanel({
                 </span>
               </div>
               <div className="qcard-thumb">
-                {entry?.url && entry.status === "ok" && (
-                  <img src={entry.url} alt={`第 ${index + 1} 题预览`} />
-                )}
+                {entry?.url && entry.status === "ok" &&
+                  (viewMode === "crop" ? (
+                    <img src={entry.url} alt={`第 ${index + 1} 题预览`} />
+                  ) : (
+                    <PagePreview
+                      url={entry.url}
+                      alt={`第 ${index + 1} 题预览`}
+                      format={viewMode}
+                      space={bottomSpace}
+                      footerText={footerText.trim()}
+                      footerSize={footerSize}
+                    />
+                  ))}
                 {entry?.status === "empty" && (
                   <div className="qcard-fallback">区域太小或已失效,无可预览内容</div>
                 )}
@@ -257,6 +299,50 @@ export default function QuestionPanel({
         })}
       </div>
     </aside>
+  );
+}
+
+interface PagePreviewProps {
+  url: string;
+  alt: string;
+  format: PageFormat;
+  space: number;
+  footerText: string;
+  footerSize: number;
+}
+
+/** 把裁剪图按导出排版放到一张缩小的页面上;尺寸以百分比定位,随面板宽度自适应。 */
+function PagePreview({ url, alt, format, space, footerText, footerSize }: PagePreviewProps) {
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const page = PAGE_SIZES[format];
+  const box = natural ? layoutOnPage(natural.w, natural.h, format, space) : null;
+  return (
+    <div className="page-preview" style={{ aspectRatio: `${page.width} / ${page.height}` }}>
+      <img
+        src={url}
+        alt={alt}
+        style={
+          box
+            ? { left: `${box.left}%`, top: `${box.top}%`, width: `${box.width}%`, height: `${box.height}%` }
+            : { visibility: "hidden" }
+        }
+        onLoad={(e) =>
+          setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+        }
+      />
+      {footerText && (
+        <span
+          className="page-preview-footer"
+          style={{
+            left: `${(FOOTER_LEFT_PT / page.width) * 100}%`,
+            // 字号按页宽等比缩放(cqw = 容器宽的 1%),与导出页上的 pt 字号同比例
+            fontSize: `${(footerSize / page.width) * 100}cqw`,
+          }}
+        >
+          {footerText}
+        </span>
+      )}
+    </div>
   );
 }
 
