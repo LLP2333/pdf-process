@@ -57,20 +57,34 @@ def test_build_pdf_creates_one_page_per_question(sample_pdf: Path, tmp_path: Pat
         doc.close()
 
 
-def test_build_pdf_bottom_space_reserves_lower_part(sample_pdf: Path, tmp_path: Path) -> None:
-    """题目留白 50%:高度受限的整页题目应被压缩到页面上半部分,下半部分空白。"""
-    out = tmp_path / "out.pdf"
+def test_build_pdf_bottom_space_shrinks_toward_top_left(sample_pdf: Path, tmp_path: Path) -> None:
+    """题目留白 50%:题目贴左上角并缩到铺满时的一半,右侧与下方留白。"""
     questions = [Question(no=1, regions=[_region(0, 0, 842)])]
-    pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, bottom_space=50.0, auto_trim=False)
 
-    doc = fitz.open(out.as_posix())
-    try:
-        page = doc[0]
-        bottoms = [b[3] for b in page.get_text("blocks")]
-        assert bottoms
-        assert max(bottoms) <= page.rect.height * 0.5 + 1
-    finally:
-        doc.close()
+    def content_bbox(space: float) -> tuple[fitz.Rect, fitz.Rect]:
+        out = tmp_path / f"out_{space}.pdf"
+        pdf_service.build_pdf({DOC_A: sample_pdf}, out, questions, bottom_space=space, auto_trim=False)
+        doc = fitz.open(out.as_posix())
+        try:
+            page = doc[0]
+            rects = [fitz.Rect(b[:4]) for b in page.get_text("blocks")]
+            assert rects
+            bbox = fitz.Rect(rects[0])
+            for r in rects[1:]:
+                bbox |= r
+            return bbox, page.rect
+        finally:
+            doc.close()
+
+    full, _ = content_bbox(0.0)
+    half, page_rect = content_bbox(50.0)
+    # 左上角锚点不变:内容左边 / 上边与 0% 时基本一致(按比例缩放的相对位移)
+    assert half.x0 <= full.x0
+    assert half.y0 <= full.y0
+    assert half.x0 < page_rect.width * 0.25
+    # 整体缩小一半:右下边界落在页面左上半区
+    assert half.x1 <= page_rect.width * 0.5 + 1
+    assert half.y1 <= page_rect.height * 0.5 + 1
 
 
 def test_build_pdf_ignores_empty_regions(sample_pdf: Path, tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-"""按题目-区域方案生成 PPTX:每题一张 16:9 幻灯片,题区图片置顶,下方留白。
+"""按题目-区域方案生成 PPTX:每题一张 16:9 幻灯片,题区图片贴左上角,右侧与下方留白。
 
 PPTX 不直接支持矢量 PDF 嵌入,这里把每个区域先用 PyMuPDF 高 DPI 渲染成 PNG
 再插入,几何与原 PDF 完全一致,清晰度对于讲解投影完全够用。
@@ -69,8 +69,8 @@ def build_pptx(
         doc_paths: `doc_id -> 源 PDF 路径`,支持一次导出引用多份文档。
         out_path: 目标 PPTX,父目录会自动创建。
         questions: 用户给的切分方案(`no` + 多区域)。
-        bottom_space: 题目下方至少预留的留白,占幻灯片高度的百分比(0-80),
-            与 PDF 导出共用同一参数;左 / 右 / 上固定留 `pdf_service.PAGE_MARGIN_PT`。
+        bottom_space: 题目留白百分比(0-80):题目在"铺满可用区"基础上缩小的比例,
+            与 PDF 导出共用同一参数;四周固定留 `pdf_service.PAGE_MARGIN_PT`。
         auto_trim: 是否自动去除区域四周白边(与 PDF 导出共用同一开关)。
         footer_text: 可选页脚署名,每张幻灯片左下角灰字。
         footer_size: 署名字号(pt),仅在 footer_text 非空时使用。
@@ -86,7 +86,8 @@ def build_pptx(
     # 把 PDF 用 pt 表示的留白换算到英寸(1in = 72pt)
     margin_in = pdf_service.PAGE_MARGIN_PT / 72.0
     avail_w_in = SLIDE_W_IN - 2 * margin_in
-    avail_h_in = SLIDE_H_IN * (1 - bottom_space / 100) - margin_in
+    avail_h_in = SLIDE_H_IN - 2 * margin_in
+    shrink = 1 - bottom_space / 100
 
     made = 0
     for q in sorted(questions, key=lambda x: x.no):
@@ -98,22 +99,19 @@ def build_pptx(
 
         imgs = [Image.open(BytesIO(b)) for b in pngs]
         # 以最宽区域定统一缩放比(所有区域同 DPI 渲染,像素比例即几何比例),
-        # 再按可用高做二次约束;每个区域按各自宽度水平居中,窄区域不再被拉伸。
+        # 再按可用高做二次约束,最后按题目留白整体缩小;各区域贴左对齐,窄区域不被拉伸。
         max_w_px = max(im.width for im in imgs)
         total_h_px = sum(im.height for im in imgs)
-        scale_in_per_px = avail_w_in / max_w_px
-        if total_h_px * scale_in_per_px > avail_h_in:
-            scale_in_per_px = avail_h_in / total_h_px
+        scale_in_per_px = min(avail_w_in / max_w_px, avail_h_in / total_h_px) * shrink
 
         slide = prs.slides.add_slide(blank_layout)
         y_in = margin_in
         for png, im in zip(pngs, imgs):
             w_in = im.width * scale_in_per_px
             h_in = im.height * scale_in_per_px
-            x_in = margin_in + (avail_w_in - w_in) / 2
             slide.shapes.add_picture(
                 BytesIO(png),
-                _emu(x_in),
+                _emu(margin_in),
                 _emu(y_in),
                 width=_emu(w_in),
                 height=_emu(h_in),

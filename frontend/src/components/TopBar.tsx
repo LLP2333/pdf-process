@@ -9,7 +9,7 @@ interface Props {
   onRedo: () => void;
   autoTrim: boolean;
   onAutoTrimChange: (value: boolean) => void;
-  /** 题目下方留白,占页高百分比(0-80),与后端 `bottom_space` 对齐。 */
+  /** 题目留白百分比(0-80):题目贴左上角并按此比例缩小,与后端 `bottom_space` 对齐。 */
   bottomSpace: number;
   onBottomSpaceChange: (value: number) => void;
   footerText: string;
@@ -118,7 +118,7 @@ export default function TopBar({
                 </label>
                 <label
                   className="settings-row settings-col"
-                  title="题目下方至少预留的空白,占页高的百分比;调大后题目会缩小,留出作答空间。左右和顶部固定留白"
+                  title="题目固定在左上角;调大后题目按比例缩小,右侧和下方留出作答空间"
                 >
                   <span className="settings-range-head">
                     <span>题目留白</span>

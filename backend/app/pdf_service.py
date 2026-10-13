@@ -24,8 +24,8 @@ PREVIEW_DPI = 192
 TRIM_WHITE_THRESHOLD = 250  # 像素灰度 ≥ 阈值视为白色,反之视为有内容
 TRIM_PADDING_PT = 2.0  # 自动去白边后向外补的安全边距(pt)
 
-# 导出页左 / 右 / 上三边的固定留白(pt);下方留白由请求的 bottom_space(页高百分比)控制。
-# PPTX 导出共用此常量。
+# 导出页四周的固定留白(pt);题目贴左上角排布,再按请求的 bottom_space(百分比)整体缩小,
+# 右侧与下方自然留出作答空间。PPTX 导出共用此常量。
 PAGE_MARGIN_PT = 28.0
 
 # 页脚署名的排版常量:左下角灰字,固定贴着纸面左下角(不随题目留白变化,
@@ -231,15 +231,15 @@ def build_pdf(
 ) -> int:
     """根据用户给的切分方案,生成一题一页的横版 A4 PDF(区域可来自多份文档)。
 
-    实现思路:对每题先把所有区域并到「最大宽度 + 总高度」,按等比缩放贴到
-    A4 横版可用区里;每个区域**各自水平居中**(窄区域不再左贴齐),
-    题区整体置顶,下方留白。使用 `page.show_pdf_page(target, src, page, clip=clip)`
+    实现思路:对每题先把所有区域并到「最大宽度 + 总高度」,先算出恰好铺满
+    A4 横版可用区的等比缩放,再乘以 `(1 - bottom_space/100)` 整体缩小;
+    题区贴左上角排布,各区域左对齐纵向堆叠,右侧与下方留白。使用 `page.show_pdf_page(target, src, page, clip=clip)`
     做矢量裁剪,公式 / 表格 / 图形 100% 保留。
 
     Args:
         doc_paths: `doc_id -> 源 PDF 路径`,支持一次导出引用多份文档。
-        bottom_space: 题目下方至少预留的留白,占页高的百分比(0-80)。
-            左 / 右 / 上固定留 `PAGE_MARGIN_PT`。
+        bottom_space: 题目留白百分比(0-80):题目在"铺满可用区"基础上缩小的比例,
+            0 表示尽量铺满,40 表示缩到 60%。四周固定留 `PAGE_MARGIN_PT`。
         auto_trim: 若 True,在裁剪前对每个区域做"像素扫描去白边"(x/y 双向)。
         footer_text: 可选页脚署名,每页左下角灰字。
         footer_size: 署名字号(pt),仅在 footer_text 非空时使用。
@@ -254,7 +254,8 @@ def build_pdf(
         page_width, page_height = page_rect.width, page_rect.height
         margin = PAGE_MARGIN_PT
         avail_w = page_width - 2 * margin
-        avail_h = page_height * (1 - bottom_space / 100) - margin
+        avail_h = page_height - 2 * margin
+        shrink = 1 - bottom_space / 100
         made = 0
         for q in sorted(questions, key=lambda x: x.no):
             regions = _normalize_regions(q, docs, auto_trim=auto_trim)
@@ -264,14 +265,13 @@ def build_pdf(
             total_h = sum(rect.height for _, _, rect in regions)
             if common_w <= 0 or total_h <= 0:
                 continue
-            scale = min(avail_w / common_w, avail_h / total_h)
+            scale = min(avail_w / common_w, avail_h / total_h) * shrink
             page = out.new_page(width=page_width, height=page_height)
             y = margin
             for doc_id, pno, clip in regions:
                 tw = clip.width * scale
                 th = clip.height * scale
-                x_left = margin + (avail_w - tw) / 2
-                target = fitz.Rect(x_left, y, x_left + tw, y + th)
+                target = fitz.Rect(margin, y, margin + tw, y + th)
                 page.show_pdf_page(target, docs[doc_id], pno, clip=clip)
                 y += th
             if footer_text:
@@ -320,7 +320,7 @@ def render_question_preview(
 ) -> bytes | None:
     """把一道题的所有区域纵向拼接为单张 PNG,供前端题目面板实时预览。
 
-    多区域拼接策略:以最大区域宽为画布宽,逐段在水平方向居中粘贴;
+    多区域拼接策略:以最大区域宽为画布宽,逐段左对齐粘贴(与导出排版一致);
     若该题无任何有效区域(全越界 / 全空 / 去白边后归零)返回 None。
     DPI 默认 110:预览质量足够分辨字形,又能压住单张图的体积。
     """
@@ -344,8 +344,7 @@ def render_question_preview(
         canvas = Image.new("RGB", (canvas_w, canvas_h), color=(255, 255, 255))
         y = 0
         for tile in tiles:
-            x = (canvas_w - tile.width) // 2
-            canvas.paste(tile, (x, y))
+            canvas.paste(tile, (0, y))
             y += tile.height
         buf = BytesIO()
         canvas.save(buf, format="PNG", optimize=True)
