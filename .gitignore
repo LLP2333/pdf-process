@@ -29,3 +29,6 @@ outputs/*
 
 # 系统
 .DS_Store
+
+# 本地启停脚本运行时文件
+.run/
